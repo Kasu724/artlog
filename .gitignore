@@ -1,0 +1,10 @@
+# Local planning and handoff material. Keep these files out of Git history.
+/docs/
+
+# Build outputs and local project data
+/node_modules/
+/dist/
+/src-tauri/target/
+**/.artlog/
+**/.artlog-restore-*/
+*.local
