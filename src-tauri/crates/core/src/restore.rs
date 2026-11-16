@@ -139,6 +139,11 @@ pub fn in_place(
         ));
     }
     let _guard = repo.with_write_lock()?;
+    if !repo.recovery_paths()?.is_empty() {
+        return Err(Error::Invalid(
+            "Review the pending restore recovery first. You can still restore as a copy.".into(),
+        ));
+    }
     replace_locked(repo, version, path, |_| {})
 }
 

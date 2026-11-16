@@ -1,13 +1,320 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { artlog } from "../api";
+import type {
+  CaptureStatus,
+  CommitSummary,
+  FileVersion,
+  ProjectView,
+  RepositoryHealth,
+  RestoreOutcome,
+  ScanEntry,
+  Settings,
+  ViewName,
+} from "../types";
 
-type Project = { path: string; name: string };
+type Setup = { root: string; files: ScanEntry[]; tracked: string[] };
+
+function errorMessage(cause: unknown): string {
+  if (typeof cause === "string") return cause;
+  if (cause instanceof Error) return cause.message;
+  return "ArtLog could not complete that action. Try again, and keep the original file safe.";
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = value / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size < 10 ? size.toFixed(1) : Math.round(size)} ${units[unit]}`;
+}
+
+function formatDate(value: string): {
+  day: string;
+  time: string;
+  full: string;
+} {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()))
+    return { day: value, time: "", full: value };
+  return {
+    day: new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(date),
+    time: new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date),
+    full: date.toLocaleString(),
+  };
+}
+
+function kindName(kind: CommitSummary["kind"]): string {
+  return (
+    {
+      baseline: "First snapshot",
+      auto: "Automatic save",
+      checkpoint: "Checkpoint",
+      safety: "Safety snapshot",
+      restore: "Restored version",
+    } as const
+  )[kind];
+}
+
+function statusName(status: CaptureStatus["state"]): string {
+  return (
+    {
+      pending: "Changes pending",
+      capturing: "Saving a snapshot",
+      current: "Up to date",
+      paused: "Capture paused",
+      error: "Capture needs attention",
+    } as const
+  )[status];
+}
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).at(-1) ?? path;
+}
+
+function joinPath(root: string, ...parts: string[]): string {
+  const separator = root.includes("\\") ? "\\" : "/";
+  return [root.replace(/[\\/]+$/, ""), ...parts].join(separator);
+}
+
+function PreviewComparison({
+  current,
+  previous,
+}: {
+  current: string;
+  previous?: string;
+}) {
+  return (
+    <section className="compare-panel" aria-label="Preview comparison">
+      <div className="section-heading compare-heading">
+        <div>
+          <div className="eyebrow">VISUAL CHECK</div>
+          <h3>Compare versions</h3>
+        </div>
+        <span className="preview-unavailable">PREVIEWS UNAVAILABLE</span>
+      </div>
+      <div className="compare-slots">
+        <PreviewUnavailableCard path={previous} label="EARLIER VERSION" />
+        <PreviewUnavailableCard path={current} label="SELECTED VERSION" />
+      </div>
+      <p className="muted-caption">
+        History and exact file recovery work even when ArtLog cannot create a
+        preview.
+      </p>
+    </section>
+  );
+}
+
+function TrackSetup({
+  setup,
+  busy,
+  error,
+  onToggle,
+  onSelectAll,
+  onCancel,
+  onActivate,
+}: {
+  setup: Setup;
+  busy: boolean;
+  error: string;
+  onToggle: (path: string) => void;
+  onSelectAll: (paths: string[]) => void;
+  onCancel: () => void;
+  onActivate: () => void;
+}) {
+  const artworkCount = setup.files.filter((file) => file.artwork).length;
+  return (
+    <div className="setup-view">
+      <button className="text-button back-button" onClick={onCancel}>
+        ← All projects
+      </button>
+      <div className="eyebrow">
+        <span className="eyebrow-line" /> SET UP PROJECT
+      </div>
+      <h1>{fileName(setup.root)}</h1>
+      <p className="project-path">{setup.root}</p>
+      <div className="setup-card">
+        <div className="section-heading">
+          <div>
+            <h2>Choose what ArtLog tracks</h2>
+            <p>
+              Project files stay in this folder. Only the files you select enter
+              history.
+            </p>
+          </div>
+          <button
+            className="text-button"
+            onClick={() =>
+              onSelectAll(
+                setup.tracked.length === setup.files.length
+                  ? []
+                  : setup.files.map((file) => file.path),
+              )
+            }
+          >
+            {setup.tracked.length === setup.files.length
+              ? "Clear all"
+              : "Select all"}
+          </button>
+        </div>
+        <div className="scan-list">
+          {setup.files.length === 0 && (
+            <div className="empty-inline">
+              This folder is empty. You can start a project here and add files
+              later.
+            </div>
+          )}
+          {setup.files.map((file) => (
+            <label className="scan-row" key={file.path}>
+              <input
+                aria-label={file.path}
+                type="checkbox"
+                checked={setup.tracked.includes(file.path)}
+                onChange={() => onToggle(file.path)}
+              />
+              <span className={`file-glyph ${file.artwork ? "artwork" : ""}`}>
+                {fileName(file.path)
+                  .split(".")
+                  .at(-1)
+                  ?.slice(0, 4)
+                  .toUpperCase() ?? "FILE"}
+              </span>
+              <span className="scan-name" title={file.path}>
+                {file.path}
+              </span>
+              {file.artwork && <span className="scan-badge">ARTWORK</span>}
+              <span className="scan-size">{formatBytes(file.size)}</span>
+            </label>
+          ))}
+        </div>
+        <div className="setup-foot">
+          <span>
+            {setup.tracked.length} selected
+            {artworkCount > 0
+              ? ` · ${artworkCount} art file${artworkCount === 1 ? "" : "s"} found`
+              : ""}
+          </span>
+          <button
+            className="primary-button"
+            disabled={busy}
+            onClick={onActivate}
+          >
+            <span>{busy ? "Creating project…" : "Create ArtLog project"}</span>
+            <span className="arrow">↗</span>
+          </button>
+        </div>
+      </div>
+      {error && (
+        <p className="error-message" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="setup-privacy">
+        ArtLog creates a portable <code>.artlog</code> folder here. Your artwork
+        is never uploaded.
+      </p>
+    </div>
+  );
+}
 
 export default function App() {
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<ProjectView | null>(null);
+  const [view, setView] = useState<ViewName>("history");
+  const [selectedId, setSelectedId] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<FileVersion[]>([]);
+  const [previousFiles, setPreviousFiles] = useState<FileVersion[]>([]);
+  const [workingFiles, setWorkingFiles] = useState<ScanEntry[]>([]);
+  const [selectedPath, setSelectedPath] = useState("");
+  const [setup, setSetup] = useState<Setup | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<Settings | null>(null);
+  const [health, setHealth] = useState<RepositoryHealth | null>(null);
+  const [capture, setCapture] = useState<CaptureStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [checkpointOpen, setCheckpointOpen] = useState(false);
+  const [checkpointTitle, setCheckpointTitle] = useState("");
+  const [checkpointNote, setCheckpointNote] = useState("");
+  const [restoreTarget, setRestoreTarget] = useState<{
+    id: string;
+    file: FileVersion;
+  } | null>(null);
+  const [restoreConfirmed, setRestoreConfirmed] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<RestoreOutcome | null>(
+    null,
+  );
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  const selectedCommit = useMemo(
+    () =>
+      project?.commits.find((commit) => commit.id === selectedId) ??
+      project?.commits[0] ??
+      null,
+    [project, selectedId],
+  );
+
+  const projectId = project?.id;
+  const refreshProject = useCallback(
+    async (keepSelection = true) => {
+      if (!projectId) return null;
+      const next = await artlog.projectView(projectId);
+      setProject(next);
+      setSettingsDraft(next.settings);
+      setSelectedId((previous) =>
+        keepSelection && next.commits.some((commit) => commit.id === previous)
+          ? previous
+          : (next.commits[0]?.id ?? ""),
+      );
+      return next;
+    },
+    [projectId],
+  );
+
+  const loadProjectFiles = useCallback(async (id: string) => {
+    try {
+      const [files, repositoryHealth] = await Promise.all([
+        artlog.projectFiles(id),
+        artlog.repositoryHealth(id),
+      ]);
+      setWorkingFiles(files);
+      setHealth(repositoryHealth);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }, []);
+
+  async function activate(root: string, tracked: string[] | null) {
+    setBusy(true);
+    setError("");
+    try {
+      const next = await artlog.activateProject(root, tracked);
+      setProject(next);
+      setSettingsDraft(next.settings);
+      setSelectedId(next.commits[0]?.id ?? "");
+      setSelectedFiles([]);
+      setSelectedPath("");
+      setSetup(null);
+      setView("history");
+      setCapture(next.capture ?? null);
+      await loadProjectFiles(next.id);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function chooseProject() {
     setError("");
@@ -19,56 +326,357 @@ export default function App() {
       });
       if (typeof path !== "string") return;
       setBusy(true);
-      const result = await invoke<Project>("open_project", { path });
-      setProject(result);
+      const scan = await artlog.scanProject(path);
+      if (scan.exists) {
+        await activate(path, null);
+      } else {
+        const initial = scan.files
+          .filter((file) => file.artwork)
+          .map((file) => file.path);
+        setSetup({ root: path, files: scan.files, tracked: initial });
+      }
     } catch (cause) {
-      setError(String(cause));
+      setError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
   }
 
+  useEffect(() => {
+    if (!projectId) return;
+    let unsubCapture: (() => void) | undefined;
+    let unsubProject: (() => void) | undefined;
+    let active = true;
+    void listen<CaptureStatus>("capture-status", (event) => {
+      if (active && event.payload.projectId === projectId)
+        setCapture(event.payload);
+    }).then((unlisten) => {
+      if (active) unsubCapture = unlisten;
+      else unlisten();
+    });
+    void listen<string>("project-updated", (event) => {
+      if (!active || event.payload !== projectId) return;
+      void refreshProject()
+        .then((next) => next && loadProjectFiles(next.id))
+        .catch((cause) => setError(errorMessage(cause)));
+    }).then((unlisten) => {
+      if (active) unsubProject = unlisten;
+      else unlisten();
+    });
+    return () => {
+      active = false;
+      unsubCapture?.();
+      unsubProject?.();
+    };
+    // Each project gets a single subscription; handler identities change only when the project changes.
+  }, [projectId, refreshProject, loadProjectFiles]);
+
+  const selectedCommitId = selectedCommit?.id;
+  const selectedParentId = selectedCommit?.parent;
+  useEffect(() => {
+    if (!projectId || !selectedCommitId) {
+      setSelectedFiles([]);
+      setPreviousFiles([]);
+      setSelectedPath("");
+      return;
+    }
+    let active = true;
+    setError("");
+    const previousId = selectedParentId;
+    void Promise.all([
+      artlog.commitFiles(projectId, selectedCommitId),
+      previousId
+        ? artlog.commitFiles(projectId, previousId)
+        : Promise.resolve([] as FileVersion[]),
+    ])
+      .then(([files, olderFiles]) => {
+        if (!active) return;
+        setSelectedFiles(files);
+        setPreviousFiles(olderFiles);
+        setSelectedPath((current) =>
+          files.some((file) => file.path === current)
+            ? current
+            : (files[0]?.path ?? ""),
+        );
+      })
+      .catch((cause) => active && setError(errorMessage(cause)));
+    return () => {
+      active = false;
+    };
+  }, [projectId, selectedCommitId, selectedParentId]);
+
+  useEffect(() => {
+    if (!restoreTarget) {
+      if (dialogRef.current?.open) dialogRef.current.close();
+      return;
+    }
+    if (!dialogRef.current?.open) dialogRef.current?.showModal();
+  }, [restoreTarget]);
+
+  async function makeCheckpoint(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!project) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await artlog.createCheckpoint(
+        project.id,
+        checkpointTitle.trim(),
+        checkpointNote.trim(),
+      );
+      setProject(next);
+      setSettingsDraft(next.settings);
+      setSelectedId(next.commits[0]?.id ?? "");
+      await loadProjectFiles(next.id);
+      setCheckpointTitle("");
+      setCheckpointNote("");
+      setCheckpointOpen(false);
+      setNotice("Checkpoint saved.");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveProjectSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!project || !settingsDraft) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await artlog.saveSettings(project.id, settingsDraft);
+      setProject(next);
+      setSettingsDraft(next.settings);
+      setCapture(
+        next.capture ?? {
+          projectId: next.id,
+          state: next.settings.autoCapture ? "current" : "paused",
+          message: "",
+        },
+      );
+      setNotice("Project settings saved.");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleTracked(path: string) {
+    if (!settingsDraft) return;
+    setSettingsDraft({
+      ...settingsDraft,
+      tracked: settingsDraft.tracked.includes(path)
+        ? settingsDraft.tracked.filter((item) => item !== path)
+        : [...settingsDraft.tracked, path],
+    });
+  }
+
+  async function restoreAsCopy(commitId: string, file: FileVersion) {
+    if (!project) return;
+    setError("");
+    try {
+      const destination = await save({
+        title: "Restore this version as a copy",
+        defaultPath: fileName(file.path),
+        filters: [
+          {
+            name: "Artwork file",
+            extensions: [file.path.split(".").at(-1) ?? "clip"],
+          },
+        ],
+      });
+      if (typeof destination !== "string") return;
+      setBusy(true);
+      const result = await artlog.restoreCopy(
+        project.id,
+        commitId,
+        file.path,
+        destination,
+      );
+      setNotice(`Restored a verified copy to ${result}`);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreInPlace() {
+    if (!project || !restoreTarget) return;
+    const target = restoreTarget;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    setRestoreResult(null);
+    try {
+      const outcome = await artlog.restoreInPlace(
+        project.id,
+        target.id,
+        target.file.path,
+        target.file.path,
+      );
+      setRestoreResult(outcome);
+      setNotice(
+        `${fileName(outcome.path)} was restored. A safety snapshot was saved to history.`,
+      );
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setRestoreTarget(null);
+      setRestoreConfirmed(false);
+      try {
+        const next = await refreshProject();
+        if (next) await loadProjectFiles(next.id);
+      } catch (cause) {
+        setError((current) =>
+          current ? `${current}\n${errorMessage(cause)}` : errorMessage(cause),
+        );
+      }
+      setBusy(false);
+    }
+  }
+
+  async function closeProject() {
+    setBusy(true);
+    setError("");
+    try {
+      await artlog.closeProject();
+      setProject(null);
+      setSetup(null);
+      setCapture(null);
+      setHealth(null);
+      setNotice("");
+      setError("");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const openRestore = (id: string, file: FileVersion) => {
+    setError("");
+    setRestoreConfirmed(false);
+    setRestoreTarget({ id, file });
+  };
+
   return (
     <main className="app-shell">
-      <aside className="rail" aria-label="ArtLog navigation">
-        <div className="brand-mark" aria-label="ArtLog">
-          A<span>.</span>
-        </div>
-        <div className="rail-bottom">
-          <span className="local-dot" /> Local storage
-        </div>
-      </aside>
+      {project ? (
+        <aside className="project-rail" aria-label="ArtLog navigation">
+          <button
+            className="brand-mark brand-button"
+            aria-label="Close project"
+            title="Close project"
+            onClick={closeProject}
+          >
+            A<span>.</span>
+          </button>
+          <nav className="project-nav" aria-label="Project views">
+            <button
+              className={
+                view === "history" ? "nav-button active" : "nav-button"
+              }
+              aria-current={view === "history" ? "page" : undefined}
+              onClick={() => setView("history")}
+              title="History"
+            >
+              <span aria-hidden="true">◷</span>
+              <span>History</span>
+            </button>
+            <button
+              className={view === "files" ? "nav-button active" : "nav-button"}
+              aria-current={view === "files" ? "page" : undefined}
+              onClick={() => setView("files")}
+              title="Tracked files"
+            >
+              <span aria-hidden="true">▤</span>
+              <span>Files</span>
+            </button>
+            <button
+              className={
+                view === "settings" ? "nav-button active" : "nav-button"
+              }
+              aria-current={view === "settings" ? "page" : undefined}
+              onClick={() => setView("settings")}
+              title="Settings"
+            >
+              <span aria-hidden="true">⚙</span>
+              <span>Settings</span>
+            </button>
+          </nav>
+          <div className="rail-bottom">
+            <span className="local-dot" /> LOCAL ONLY
+          </div>
+        </aside>
+      ) : (
+        <aside className="rail" aria-label="ArtLog navigation">
+          <div className="brand-mark" aria-label="ArtLog">
+            A<span>.</span>
+          </div>
+          <div className="rail-bottom">
+            <span className="local-dot" /> Local storage
+          </div>
+        </aside>
+      )}
       <section className="workspace">
         <header className="topbar">
           <div className="wordmark">
             ARTLOG <span>STUDIO</span>
           </div>
-          <div className="privacy">
-            <span className="privacy-dot" /> YOUR FILES STAY ON THIS DEVICE
-          </div>
-        </header>
-        {project ? (
-          <div className="project-view">
-            <div className="eyebrow">YOUR PROJECT</div>
-            <h1>{project.name}</h1>
-            <p className="project-path">{project.path}</p>
-            <div className="empty-card">
-              <div className="empty-icon">↟</div>
-              <h2>Your history starts here</h2>
-              <p>
-                Checkpoint and automatic capture controls will appear when
-                project storage is connected.
-              </p>
-              <button
-                className="secondary-button"
-                onClick={chooseProject}
-                disabled={busy}
+          <div className="topbar-right">
+            {project && (
+              <span
+                className={`capture-pill state-${(capture ?? { state: project.settings.autoCapture ? "current" : "paused" }).state}`}
               >
-                Open another folder
-              </button>
+                <span className="capture-dot" />
+                {statusName(
+                  (
+                    capture ?? {
+                      state: project.settings.autoCapture
+                        ? "current"
+                        : "paused",
+                    }
+                  ).state,
+                )}
+              </span>
+            )}
+            <div className="privacy">
+              <span className="privacy-dot" /> YOUR FILES STAY ON THIS DEVICE
             </div>
           </div>
-        ) : (
+        </header>
+
+        {setup ? (
+          <TrackSetup
+            setup={setup}
+            busy={busy}
+            error={error}
+            onCancel={() => {
+              setSetup(null);
+              setError("");
+            }}
+            onToggle={(path) =>
+              setSetup((current) => {
+                if (!current) return current;
+                return {
+                  ...current,
+                  tracked: current.tracked.includes(path)
+                    ? current.tracked.filter((item) => item !== path)
+                    : [...current.tracked, path],
+                };
+              })
+            }
+            onSelectAll={(tracked) =>
+              setSetup((current) =>
+                current ? { ...current, tracked } : current,
+              )
+            }
+            onActivate={() => void activate(setup.root, setup.tracked)}
+          />
+        ) : !project ? (
           <div className="welcome-layout">
             <div className="welcome-copy">
               <div className="eyebrow">
@@ -95,7 +703,7 @@ export default function App() {
               </button>
               {error && (
                 <p className="error-message" role="alert">
-                  Could not open that folder. {error}
+                  {error}
                 </p>
               )}
               <p className="compatibility">
@@ -137,8 +745,756 @@ export default function App() {
               <span>MADE FOR THE WORK IN PROGRESS</span>
             </div>
           </div>
+        ) : (
+          <div className="project-view-shell">
+            <div className="project-heading-row">
+              <div className="project-heading">
+                <div className="eyebrow">YOUR PROJECT</div>
+                <h1>{project.name}</h1>
+                <p className="project-path" title={project.root}>
+                  {project.root}
+                </p>
+              </div>
+              <div className="project-actions">
+                {view === "history" && (
+                  <button
+                    className="primary-button compact-button"
+                    aria-label={
+                      checkpointOpen ? "Cancel checkpoint" : "Create checkpoint"
+                    }
+                    onClick={() => {
+                      setCheckpointOpen((openState) => !openState);
+                      setError("");
+                    }}
+                  >
+                    <span>
+                      {checkpointOpen ? "Cancel checkpoint" : "＋ Checkpoint"}
+                    </span>
+                  </button>
+                )}
+                <button
+                  className="more-button"
+                  aria-label="Open another project"
+                  title="Open another project"
+                  onClick={chooseProject}
+                >
+                  ↗
+                </button>
+              </div>
+            </div>
+            {notice && (
+              <div className="notice-banner" role="status">
+                <span>✓</span>
+                {notice}
+                <button
+                  className="notice-close"
+                  aria-label="Dismiss message"
+                  onClick={() => {
+                    setNotice("");
+                    setRestoreResult(null);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {restoreResult && (
+              <div className="safety-notice">
+                <div>
+                  <strong>Safety snapshot saved.</strong> Version{" "}
+                  <code>{restoreResult.safetyId.slice(0, 8)}</code> preserves
+                  the work that was in the file before replacement.
+                </div>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setView("history");
+                    setSelectedId(restoreResult.safetyId);
+                  }}
+                >
+                  View safety snapshot →
+                </button>
+              </div>
+            )}
+            {error && (
+              <div className="error-message project-error" role="alert">
+                {error}
+              </div>
+            )}
+            {checkpointOpen && (
+              <form
+                className="checkpoint-form"
+                onSubmit={(event) => void makeCheckpoint(event)}
+              >
+                <div className="checkpoint-heading">
+                  <div>
+                    <div className="eyebrow">SAVE A MILESTONE</div>
+                    <h2>Named checkpoint</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setCheckpointOpen(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <label>
+                  Checkpoint name
+                  <input
+                    autoFocus
+                    maxLength={100}
+                    value={checkpointTitle}
+                    onChange={(event) => setCheckpointTitle(event.target.value)}
+                    placeholder="e.g. Approved line art"
+                    required
+                  />
+                </label>
+                <label>
+                  Note <span className="optional-label">OPTIONAL</span>
+                  <textarea
+                    maxLength={1000}
+                    value={checkpointNote}
+                    onChange={(event) => setCheckpointNote(event.target.value)}
+                    placeholder="What changed or what should you remember?"
+                    rows={2}
+                  />
+                </label>
+                <div className="form-actions">
+                  <span>{checkpointTitle.length}/100 characters</span>
+                  <button
+                    className="primary-button compact-button"
+                    disabled={busy || !checkpointTitle.trim()}
+                  >
+                    {busy ? "Saving…" : "Save checkpoint"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {view === "history" && (
+              <div className="history-layout">
+                <section
+                  className="timeline-panel"
+                  aria-label="Version timeline"
+                >
+                  <div className="section-heading timeline-heading">
+                    <div>
+                      <div className="eyebrow">MAIN HISTORY</div>
+                      <h2>Timeline</h2>
+                    </div>
+                    <span className="version-count">
+                      {project.commits.length}{" "}
+                      {project.commits.length === 1 ? "VERSION" : "VERSIONS"}
+                    </span>
+                  </div>
+                  <div className="timeline-list">
+                    {project.commits.length === 0 ? (
+                      <div className="timeline-empty">
+                        <div className="empty-icon">◷</div>
+                        <h3>No snapshots yet</h3>
+                        <p>
+                          Save a named checkpoint to start your project history.
+                        </p>
+                      </div>
+                    ) : (
+                      project.commits.map((commit, index) => (
+                        <TimelineEntry
+                          key={commit.id}
+                          commit={commit}
+                          selected={commit.id === selectedCommit?.id}
+                          latest={index === 0}
+                          onSelect={() => setSelectedId(commit.id)}
+                        />
+                      ))
+                    )}
+                  </div>
+                  <div className="timeline-foot">
+                    <span className="branch-indicator" /> main <span>·</span>{" "}
+                    {formatBytes(project.size)} stored
+                  </div>
+                </section>
+                <section
+                  className="version-panel"
+                  aria-label="Selected version details"
+                >
+                  {selectedCommit ? (
+                    <>
+                      <VersionDetail
+                        commit={selectedCommit}
+                        files={selectedFiles}
+                        selectedPath={selectedPath}
+                        busy={busy}
+                        onSelectPath={setSelectedPath}
+                        onRestoreCopy={() => {
+                          const file = selectedFiles.find(
+                            (item) => item.path === selectedPath,
+                          );
+                          if (file) void restoreAsCopy(selectedCommit.id, file);
+                        }}
+                        onRestoreInPlace={() => {
+                          const file = selectedFiles.find(
+                            (item) => item.path === selectedPath,
+                          );
+                          if (file) openRestore(selectedCommit.id, file);
+                        }}
+                      />
+                      <PreviewComparison
+                        current={selectedPath}
+                        previous={
+                          previousFiles.find(
+                            (file) => file.path === selectedPath,
+                          )?.path
+                        }
+                      />
+                    </>
+                  ) : (
+                    <div className="detail-empty">
+                      <span className="empty-icon">◷</span>
+                      <h2>History starts here</h2>
+                      <p>
+                        Save a named checkpoint to create the first version.
+                      </p>
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
+
+            {view === "files" && (
+              <FilesView
+                files={workingFiles}
+                settings={project.settings}
+                onGoSettings={() => setView("settings")}
+              />
+            )}
+
+            {view === "settings" && settingsDraft && (
+              <SettingsView
+                project={project}
+                settings={settingsDraft}
+                health={health}
+                busy={busy}
+                files={workingFiles}
+                onChange={setSettingsDraft}
+                onToggle={toggleTracked}
+                onSave={(event) => void saveProjectSettings(event)}
+              />
+            )}
+
+            {project.recoveryPaths.length > 0 && (
+              <section
+                className="recovery-panel"
+                aria-labelledby="recovery-title"
+              >
+                <div className="recovery-mark">!</div>
+                <div>
+                  <h3 id="recovery-title">Recovery files need attention</h3>
+                  <p>
+                    Keep these files. Open the safety checkpoint in this
+                    project’s history, or read{" "}
+                    <code>.artlog/staging/&lt;folder&gt;/recovery.json</code>{" "}
+                    for the sibling recovery folder path. Do not remove these
+                    files until you have recovered the work.
+                  </p>
+                  {project.recoveryPaths.map((path) => (
+                    <code className="recovery-path" key={path}>
+                      {joinPath(project.root, ".artlog", "staging", path)}
+                    </code>
+                  ))}
+                  {project.commits.find(
+                    (commit) => commit.kind === "safety",
+                  ) && (
+                    <button
+                      className="text-button recovery-link"
+                      onClick={() => {
+                        setView("history");
+                        setSelectedId(
+                          project.commits.find(
+                            (commit) => commit.kind === "safety",
+                          )?.id ?? "",
+                        );
+                      }}
+                    >
+                      View safety checkpoint →
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
+          </div>
         )}
       </section>
+
+      <dialog
+        ref={dialogRef}
+        className="restore-dialog"
+        onCancel={(event) => {
+          event.preventDefault();
+          setRestoreTarget(null);
+          setRestoreConfirmed(false);
+        }}
+      >
+        {restoreTarget && (
+          <>
+            <div className="dialog-kicker">REPLACE WORKING FILE</div>
+            <div className="dialog-warning">!</div>
+            <h2>Restore {fileName(restoreTarget.file.path)} in place?</h2>
+            <p>
+              This replaces the current{" "}
+              <strong title={restoreTarget.file.path}>
+                {restoreTarget.file.path}
+              </strong>{" "}
+              with the selected historical version. Close it in Photoshop or
+              Clip Studio Paint first so the editor does not save over the
+              restored file.
+            </p>
+            <p>
+              ArtLog will save a safety snapshot of the current work before it
+              replaces the file.
+            </p>
+            <label className="confirm-check">
+              <input
+                type="checkbox"
+                checked={restoreConfirmed}
+                onChange={(event) => setRestoreConfirmed(event.target.checked)}
+              />
+              <span>
+                I understand this replaces{" "}
+                <strong>{restoreTarget.file.path}</strong>
+              </span>
+            </label>
+            <div className="dialog-actions">
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  setRestoreTarget(null);
+                  setRestoreConfirmed(false);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                disabled={!restoreConfirmed || busy}
+                onClick={() => void restoreInPlace()}
+              >
+                {busy ? "Restoring safely…" : "Replace with this version"}
+              </button>
+            </div>
+          </>
+        )}
+      </dialog>
     </main>
+  );
+}
+
+function TimelineEntry({
+  commit,
+  selected,
+  latest,
+  onSelect,
+}: {
+  commit: CommitSummary;
+  selected: boolean;
+  latest: boolean;
+  onSelect: () => void;
+}) {
+  const date = formatDate(commit.timestamp);
+  return (
+    <button
+      className={`timeline-entry ${selected ? "selected" : ""}`}
+      aria-pressed={selected}
+      onClick={onSelect}
+    >
+      <span
+        className={`timeline-node kind-${commit.kind} ${latest ? "latest" : ""}`}
+      >
+        {commit.kind === "safety"
+          ? "!"
+          : commit.kind === "checkpoint"
+            ? "◆"
+            : ""}
+      </span>
+      <span className="timeline-copy">
+        <span className="timeline-title">{commit.title}</span>
+        <span className="timeline-meta">
+          <span className={`kind-tag kind-tag-${commit.kind}`}>
+            {kindName(commit.kind)}
+          </span>
+          <time dateTime={commit.timestamp} title={date.full}>
+            {date.day} · {date.time}
+          </time>
+        </span>
+        <span className="timeline-note">
+          {commit.note ||
+            `${commit.fileCount} tracked file${commit.fileCount === 1 ? "" : "s"}`}
+        </span>
+      </span>
+      {selected && (
+        <span className="timeline-chevron" aria-hidden="true">
+          ›
+        </span>
+      )}
+    </button>
+  );
+}
+
+function VersionDetail({
+  commit,
+  files,
+  selectedPath,
+  busy,
+  onSelectPath,
+  onRestoreCopy,
+  onRestoreInPlace,
+}: {
+  commit: CommitSummary;
+  files: FileVersion[];
+  selectedPath: string;
+  busy: boolean;
+  onSelectPath: (path: string) => void;
+  onRestoreCopy: () => void;
+  onRestoreInPlace: () => void;
+}) {
+  const date = formatDate(commit.timestamp);
+  return (
+    <section className="version-card">
+      <div className="section-heading detail-heading">
+        <div>
+          <div className="eyebrow">VERSION DETAILS</div>
+          <h2>{commit.title}</h2>
+        </div>
+        <span className={`kind-badge kind-tag-${commit.kind}`}>
+          {kindName(commit.kind)}
+        </span>
+      </div>
+      <time
+        className="detail-date"
+        dateTime={commit.timestamp}
+        title={date.full}
+      >
+        {date.day} · {date.time}
+      </time>
+      {commit.note && <p className="detail-note">{commit.note}</p>}
+      <div className="detail-divider" />
+      <div className="files-title-row">
+        <div className="eyebrow">FILES IN THIS VERSION</div>
+        <span>
+          {files.length} FILE{files.length === 1 ? "" : "S"}
+        </span>
+      </div>
+      {files.length === 0 ? (
+        <div className="empty-inline">No tracked files in this snapshot.</div>
+      ) : (
+        <div className="version-files">
+          {files.map((file) => (
+            <button
+              className={
+                selectedPath === file.path
+                  ? "version-file selected"
+                  : "version-file"
+              }
+              key={file.path}
+              onClick={() => onSelectPath(file.path)}
+              title={file.path}
+            >
+              <span
+                className={`file-glyph ${file.path.toLowerCase().endsWith(".clip") || file.path.toLowerCase().endsWith(".psd") ? "artwork" : ""}`}
+              >
+                {file.path.toLowerCase().endsWith(".clip")
+                  ? "CLIP"
+                  : file.path.toLowerCase().endsWith(".psd")
+                    ? "PSD"
+                    : "FILE"}
+              </span>
+              <span className="version-file-name">{file.path}</span>
+              <span className="version-file-size">
+                {formatBytes(file.size)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {selectedPath && (
+        <div className="selected-file-hash">
+          <span>VERIFIED CONTENT</span>
+          <code title={files.find((file) => file.path === selectedPath)?.hash}>
+            {files
+              .find((file) => file.path === selectedPath)
+              ?.hash.slice(0, 16) ?? ""}
+            …
+          </code>
+        </div>
+      )}
+      <div className="restore-actions">
+        <button
+          className="primary-button restore-copy"
+          disabled={busy || !selectedPath}
+          onClick={onRestoreCopy}
+        >
+          <span>Restore as a copy</span>
+          <span className="arrow">↗</span>
+        </button>
+        <button
+          className="text-button restore-place"
+          disabled={busy || !selectedPath}
+          onClick={onRestoreInPlace}
+        >
+          Replace working file…
+        </button>
+      </div>
+      <p className="restore-safe-note">
+        A separate copy is the safest way to bring back an earlier version.
+      </p>
+    </section>
+  );
+}
+
+function PreviewUnavailableCard({
+  path,
+  label,
+}: {
+  path?: string;
+  label: string;
+}) {
+  return (
+    <div className="file-preview-card">
+      <span className="preview-card-label">{label}</span>
+      <div className="preview-card-center">
+        <span className="file-glyph artwork">
+          {path?.toLowerCase().endsWith(".clip")
+            ? "CLIP"
+            : path?.toLowerCase().endsWith(".psd")
+              ? "PSD"
+              : "ART"}
+        </span>
+        <span>Preview unavailable</span>
+      </div>
+      <span className="preview-card-name" title={path}>
+        {path ? fileName(path) : "No earlier version"}
+      </span>
+    </div>
+  );
+}
+
+function FilesView({
+  files,
+  settings,
+  onGoSettings,
+}: {
+  files: ScanEntry[];
+  settings: Settings;
+  onGoSettings: () => void;
+}) {
+  const tracked = new Set(settings.tracked);
+  return (
+    <section className="standalone-panel files-view">
+      <div className="eyebrow">PROJECT CONTENTS</div>
+      <h2>Tracked files</h2>
+      <p className="section-description">
+        ArtLog watches these files while you work. Companion assets only enter
+        history when you include them.
+      </p>
+      {files.length === 0 ? (
+        <div className="empty-card compact-empty">
+          <div className="empty-icon">▤</div>
+          <h2>No files found</h2>
+          <p>
+            Add artwork to the project folder, then update which files ArtLog
+            tracks.
+          </p>
+          <button className="secondary-button" onClick={onGoSettings}>
+            Manage tracked files
+          </button>
+        </div>
+      ) : (
+        <div className="tracked-list">
+          {files.map((file) => (
+            <div className="tracked-row" key={file.path}>
+              <span className={`file-glyph ${file.artwork ? "artwork" : ""}`}>
+                {fileName(file.path)
+                  .split(".")
+                  .at(-1)
+                  ?.slice(0, 4)
+                  .toUpperCase() ?? "FILE"}
+              </span>
+              <span className="tracked-name" title={file.path}>
+                {file.path}
+              </span>
+              {file.artwork && (
+                <span className="scan-badge">SUPPORTED ART</span>
+              )}
+              <span
+                className={
+                  tracked.has(file.path) ? "tracking-on" : "tracking-off"
+                }
+              >
+                {tracked.has(file.path) ? "TRACKED" : "NOT TRACKED"}
+              </span>
+              <span className="scan-size">{formatBytes(file.size)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <button className="secondary-button" onClick={onGoSettings}>
+        Manage tracked files
+      </button>
+    </section>
+  );
+}
+
+function SettingsView({
+  project,
+  settings,
+  health,
+  busy,
+  files,
+  onChange,
+  onToggle,
+  onSave,
+}: {
+  project: ProjectView;
+  settings: Settings;
+  health: RepositoryHealth | null;
+  busy: boolean;
+  files: ScanEntry[];
+  onChange: (settings: Settings) => void;
+  onToggle: (path: string) => void;
+  onSave: (event: React.FormEvent<HTMLFormElement>) => void;
+}) {
+  const tracked = new Set(settings.tracked);
+  const unchanged =
+    settings.autoCapture === project.settings.autoCapture &&
+    settings.debounceMs === project.settings.debounceMs &&
+    settings.tracked.length === project.settings.tracked.length &&
+    settings.tracked.every((path) => project.settings.tracked.includes(path));
+  return (
+    <form className="standalone-panel settings-view" onSubmit={onSave}>
+      <div className="eyebrow">PROJECT PREFERENCES</div>
+      <h2>Settings</h2>
+      <p className="section-description">
+        Choose what ArtLog preserves and when it records your saved files.
+      </p>
+      <section className="settings-section">
+        <div className="section-heading">
+          <div>
+            <h3>Automatic capture</h3>
+            <p>
+              Wait for saves to settle, then record changed artwork without
+              duplicate versions.
+            </p>
+          </div>
+          <label className="switch-control" aria-label="Automatic capture">
+            <input
+              type="checkbox"
+              checked={settings.autoCapture}
+              onChange={(event) =>
+                onChange({ ...settings, autoCapture: event.target.checked })
+              }
+            />
+            <span />
+          </label>
+        </div>
+        <label className="setting-range">
+          <span>
+            <strong>Save stability delay</strong>
+            <small>
+              ArtLog checks that file size and modification time stop changing.
+            </small>
+          </span>
+          <span className="range-value">
+            {(settings.debounceMs / 1000).toFixed(2)}s
+          </span>
+          <input
+            type="range"
+            min={250}
+            max={10000}
+            step={250}
+            value={settings.debounceMs}
+            onChange={(event) =>
+              onChange({ ...settings, debounceMs: Number(event.target.value) })
+            }
+          />
+          <span className="range-ends">
+            <span>250 ms</span>
+            <span>10 seconds</span>
+          </span>
+        </label>
+      </section>
+      <section className="settings-section">
+        <div className="section-heading">
+          <div>
+            <h3>Files in history</h3>
+            <p>
+              Supported artwork is selected by default. Include companion files
+              when needed.
+            </p>
+          </div>
+          <span className="version-count">
+            {settings.tracked.length} TRACKED
+          </span>
+        </div>
+        <div className="scan-list settings-scan">
+          {files.length ? (
+            files.map((file) => (
+              <label className="scan-row" key={file.path}>
+                <input
+                  aria-label={file.path}
+                  type="checkbox"
+                  checked={tracked.has(file.path)}
+                  onChange={() => onToggle(file.path)}
+                />
+                <span className={`file-glyph ${file.artwork ? "artwork" : ""}`}>
+                  {fileName(file.path)
+                    .split(".")
+                    .at(-1)
+                    ?.slice(0, 4)
+                    .toUpperCase() ?? "FILE"}
+                </span>
+                <span className="scan-name" title={file.path}>
+                  {file.path}
+                </span>
+                {file.artwork && <span className="scan-badge">ARTWORK</span>}
+                <span className="scan-size">{formatBytes(file.size)}</span>
+              </label>
+            ))
+          ) : (
+            <div className="empty-inline">
+              No files are currently available in the project folder.
+            </div>
+          )}
+        </div>
+      </section>
+      <section className="settings-section repository-stats">
+        <h3>Repository health</h3>
+        <div className="stat-cards">
+          <div className="stat-card">
+            <span>PORTABLE HISTORY</span>
+            <strong>{formatBytes(project.size)}</strong>
+            <small>Stored in this project folder</small>
+          </div>
+          <div className="stat-card">
+            <span>VERSIONS</span>
+            <strong>{health?.versions ?? project.commits.length}</strong>
+            <small>On the main history line</small>
+          </div>
+          <div className="stat-card">
+            <span>CONTENT OBJECTS</span>
+            <strong>{health?.objects ?? "—"}</strong>
+            <small>Verified when ArtLog restores a file</small>
+          </div>
+        </div>
+      </section>
+      <div className="settings-footer">
+        <span>{unchanged ? "No unsaved changes" : "Unsaved settings"}</span>
+        <button
+          className="primary-button compact-button"
+          disabled={busy || unchanged}
+        >
+          {busy ? "Saving…" : "Save settings"}
+        </button>
+      </div>
+    </form>
   );
 }

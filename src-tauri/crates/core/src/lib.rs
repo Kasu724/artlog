@@ -22,7 +22,7 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("invalid project path or setting: {0}")]
+    #[error("{0}")]
     Invalid(String),
     #[error("repository data is corrupted: {0}")]
     Corrupt(String),
@@ -281,12 +281,15 @@ impl Repository {
         }
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)
             .map_err(|e| Error::io("open repository lock", &path, e))?;
         file.try_lock_exclusive().map_err(|e| {
-            if e.kind() == io::ErrorKind::WouldBlock {
+            if e.kind() == io::ErrorKind::WouldBlock
+                || e.raw_os_error().is_some_and(|code| Some(code) == fs2::lock_contended_error().raw_os_error())
+            {
                 Error::Busy
             } else {
                 Error::io("lock repository", &path, e)
@@ -430,27 +433,34 @@ impl Repository {
     pub fn source_path(&self, path: &str) -> Result<PathBuf> {
         validate_relative(path)?;
         let mut cur = self.root.clone();
-        for component in path.split('/') {
+        check_directory(&cur)?;
+        let mut found = true;
+        let mut components = path.split('/').peekable();
+        while let Some(component) = components.next() {
             cur.push(component);
+            if !found {
+                continue;
+            }
             match fs::symlink_metadata(&cur) {
                 Ok(m) if is_link(&m) => {
                     return Err(Error::Invalid(format!(
                         "symlinks and reparse points are not tracked: {path}"
                     )))
                 }
-                Ok(m) if cur != self.root && !m.is_dir() && cur != self.root.join(path) => {
+                Ok(m) if components.peek().is_some() && !m.is_dir() => {
                     return Err(Error::Invalid(format!(
                         "parent component is not a directory: {path}"
                     )))
                 }
+                Ok(m) if components.peek().is_none() && !m.is_file() => {
+                    return Err(Error::Invalid(format!("Tracked path is not a regular file: {path}")))
+                }
                 Ok(_) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => break,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => found = false,
                 Err(e) => return Err(Error::io("inspect project path", &cur, e)),
             }
         }
-        Ok(self
-            .root
-            .join(path.replace('/', &std::path::MAIN_SEPARATOR.to_string())))
+        Ok(cur)
     }
     pub fn hash_file(path: &Path) -> Result<String> {
         hash_file(path)
@@ -463,25 +473,13 @@ impl Repository {
     pub fn health(&self) -> Result<Health> {
         let history = self.history()?;
         let mut objects = std::collections::HashSet::new();
+        let mut files = std::collections::HashSet::new();
         for c in &history {
             for e in &c.files {
-                for id in &e.chunks {
-                    let p = safe_object_path(&self.metadata, id)?;
-                    let m = fs::symlink_metadata(&p)
-                        .map_err(|e| Error::io("verify stored object", &p, e))?;
-                    if !m.is_file() || is_link(&m) || m.len() as usize > CHUNK_MAX {
-                        return Err(Error::Corrupt(format!("unsafe or oversized object: {id}")));
-                    }
-                    let mut f =
-                        File::open(&p).map_err(|e| Error::io("verify stored object", &p, e))?;
-                    let mut h = blake3::Hasher::new();
-                    io::copy(&mut f, &mut HashWriter(&mut h))
-                        .map_err(|e| Error::io("verify stored object", &p, e))?;
-                    if h.finalize().to_hex().as_str() != id {
-                        return Err(Error::Corrupt(format!("object hash mismatch: {id}")));
-                    }
-                    objects.insert(id.clone());
+                if files.insert((&e.hash, e.size, &e.chunks)) {
+                    self.reconstruct(e, &mut io::sink())?;
                 }
+                objects.extend(&e.chunks);
             }
         }
         Ok(Health {
@@ -583,13 +581,14 @@ impl Repository {
         let mut staged = tempfile::tempfile_in(&staging)
             .map_err(|e| Error::io("create capture staging file", &staging, e))?;
         let mut full_hash = blake3::Hasher::new();
-        let mut tee = HashingWriter {
-            output: &mut staged,
-            hasher: &mut full_hash,
+        let copied = {
+            let mut tee = HashingWriter {
+                output: &mut staged,
+                hasher: &mut full_hash,
+            };
+            io::copy(&mut input.take(original_size.saturating_add(1)), &mut tee)
+                .map_err(|e| Error::io("copy source to capture staging", source, e))?
         };
-        let copied = io::copy(&mut input.take(original_size.saturating_add(1)), &mut tee)
-            .map_err(|e| Error::io("copy source to capture staging", source, e))?;
-        drop(tee);
         staged
             .sync_all()
             .map_err(|e| Error::io("flush capture staging", &staging, e))?;
@@ -767,7 +766,7 @@ impl Drop for WriteGuard {
     }
 }
 pub fn hash_file(path: &Path) -> Result<String> {
-    let mut f = File::open(path).map_err(|e| Error::io("hash file", path, e))?;
+    let mut f = open_source(path).map_err(|e| Error::io("hash file", path, e))?;
     let mut h = blake3::Hasher::new();
     io::copy(&mut f, &mut HashWriter(&mut h)).map_err(|e| Error::io("hash file", path, e))?;
     Ok(h.finalize().to_hex().to_string())
@@ -975,6 +974,10 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .map_err(|e| Error::io("flush staged metadata", path, e))?;
     temp.persist(path)
         .map_err(|e| Error::io("replace metadata", path, e.error))?;
+    #[cfg(unix)]
+    File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|e| Error::io("flush metadata directory", parent, e))?;
     Ok(())
 }
 fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -997,14 +1000,12 @@ fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScanEntry>) -> Result<()> {
     for e in fs::read_dir(dir).map_err(|e| Error::io("scan project", dir, e))? {
         let e = e.map_err(|e| Error::io("scan project entry", dir, e))?;
         let name = e.file_name();
-        let s = name.to_string_lossy();
-        if s == ".artlog"
-            || s == ".git"
-            || s.starts_with("~$")
-            || s.ends_with(".tmp")
-            || s.ends_with(".temp")
-            || s.starts_with(".artlog-restore-")
-            || s.starts_with(".artlog-staged-")
+        let Some(name) = name.to_str() else { continue };
+        let lower = name.to_ascii_lowercase();
+        if validate_relative(name).is_err()
+            || lower.starts_with("~$")
+            || lower.ends_with(".tmp")
+            || lower.ends_with(".temp")
         {
             continue;
         }
@@ -1032,13 +1033,11 @@ fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScanEntry>) -> Result<()> {
                     .as_deref(),
                 Some("clip" | "psd")
             );
-            if artwork {
-                out.push(ScanEntry {
-                    path: p,
-                    artwork,
-                    size: m.len(),
-                })
-            }
+            out.push(ScanEntry {
+                path: p,
+                artwork,
+                size: m.len(),
+            })
         }
     }
     Ok(())
@@ -1067,3 +1066,4 @@ fn gear(b: u8) -> u64 {
 }
 pub mod index;
 pub mod restore;
+pub mod watcher;
