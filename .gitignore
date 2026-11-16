@@ -10,4 +10,8 @@
 /src-tauri/crates/*/Cargo.lock
 **/.artlog/
 **/.artlog-restore-*/
+**/.artlog-staged-*
+/THIRD_PARTY_NOTICES.txt
+*.clip
+*.psd
 *.local
