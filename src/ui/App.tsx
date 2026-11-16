@@ -86,6 +86,11 @@ function fileName(path: string): string {
   return path.split(/[\\/]/).at(-1) ?? path;
 }
 
+function isClipFile(path: string): boolean {
+  const name = fileName(path);
+  return name.length > 5 && name.toLowerCase().endsWith(".clip");
+}
+
 function joinPath(root: string, ...parts: string[]): string {
   const separator = root.includes("\\") ? "\\" : "/";
   return [root.replace(/[\\/]+$/, ""), ...parts].join(separator);
@@ -704,9 +709,7 @@ function PreviewPane({
 }) {
   const adapterNote =
     state.state === "ready"
-      ? state.preview.adapter === "export"
-        ? `Artist-provided export · approximate visual reference · ${state.preview.width} × ${state.preview.height}`
-        : `PSD merged preview · ${state.preview.adapterVersion} · ${state.preview.width} × ${state.preview.height}`
+      ? `Artist-provided PNG/JPEG export · approximate visual reference · ${state.preview.width} × ${state.preview.height}`
       : "";
   return (
     <div className="preview-pane">
@@ -751,12 +754,8 @@ function PreviewPane({
         </div>
       ) : (
         <div className="preview-state">
-          <span className="file-glyph artwork">
-            {path.toLowerCase().endsWith(".clip")
-              ? "CLIP"
-              : path.toLowerCase().endsWith(".psd")
-                ? "PSD"
-                : "FILE"}
+          <span className={`file-glyph ${isClipFile(path) ? "artwork" : ""}`}>
+            {isClipFile(path) ? "CLIP" : "FILE"}
           </span>
           <span>
             {commit
@@ -769,7 +768,9 @@ function PreviewPane({
         <span
           className="preview-provenance"
           title={
-            state.state === "ready" ? state.preview.adapterVersion : undefined
+            state.state === "ready"
+              ? String(state.preview.adapterVersion)
+              : undefined
           }
         >
           {adapterNote}
@@ -777,11 +778,11 @@ function PreviewPane({
       )}
       {commit && state.state !== "ready" && (
         <span className="attach-preview-note">
-          A flattened export is an approximate reference for this version and
-          file. The source artwork stays unchanged.
+          Attach a PNG or JPEG export from Clip Studio Paint as an approximate
+          visual reference. The source file stays unchanged.
         </span>
       )}
-      {commit && (
+      {commit && isClipFile(path) && (
         <button
           className="text-button attach-preview"
           onClick={onAttach}
@@ -814,7 +815,6 @@ function TrackSetup({
   onCancel: () => void;
   onActivate: () => void;
 }) {
-  const artworkCount = setup.files.filter((file) => file.artwork).length;
   return (
     <div className="setup-view">
       <button className="text-button back-button" onClick={onCancel}>
@@ -829,10 +829,7 @@ function TrackSetup({
         <div className="section-heading">
           <div>
             <h2>Choose what ArtLog tracks</h2>
-            <p>
-              Project files stay in this folder. Only the files you select enter
-              history.
-            </p>
+            <p>ArtLog tracks Clip Studio Paint .clip files in this folder.</p>
           </div>
           <button
             className="text-button"
@@ -852,8 +849,8 @@ function TrackSetup({
         <div className="scan-list">
           {setup.files.length === 0 && (
             <div className="empty-inline">
-              This folder is empty. You can start a project here and add files
-              later.
+              No Clip Studio Paint files found. You can start a project here and
+              add .clip files later.
             </div>
           )}
           {setup.files.map((file) => (
@@ -864,7 +861,7 @@ function TrackSetup({
                 checked={setup.tracked.includes(file.path)}
                 onChange={() => onToggle(file.path)}
               />
-              <span className={`file-glyph ${file.artwork ? "artwork" : ""}`}>
+              <span className="file-glyph artwork">
                 {fileName(file.path)
                   .split(".")
                   .at(-1)
@@ -874,18 +871,13 @@ function TrackSetup({
               <span className="scan-name" title={file.path}>
                 {file.path}
               </span>
-              {file.artwork && <span className="scan-badge">ARTWORK</span>}
+              <span className="scan-badge">CLIP</span>
               <span className="scan-size">{formatBytes(file.size)}</span>
             </label>
           ))}
         </div>
         <div className="setup-foot">
-          <span>
-            {setup.tracked.length} selected
-            {artworkCount > 0
-              ? ` · ${artworkCount} art file${artworkCount === 1 ? "" : "s"} found`
-              : ""}
-          </span>
+          <span>{setup.tracked.length} selected</span>
           <button
             className="primary-button"
             disabled={busy}
@@ -1026,9 +1018,7 @@ export default function App() {
       if (scan.exists) {
         await activate(path, null);
       } else {
-        const initial = scan.files
-          .filter((file) => file.artwork)
-          .map((file) => file.path);
+        const initial = scan.files.map((file) => file.path);
         setSetup({ root: path, files: scan.files, tracked: initial });
       }
     } catch (cause) {
@@ -1209,15 +1199,15 @@ export default function App() {
     if (!project) return;
     setError("");
     try {
+      const name = fileName(file.path);
+      const dot = name.lastIndexOf(".");
       const destination = await save({
         title: "Restore this version as a copy",
-        defaultPath: fileName(file.path),
-        filters: [
-          {
-            name: "Artwork file",
-            extensions: [file.path.split(".").at(-1) ?? "clip"],
-          },
-        ],
+        defaultPath: name,
+        filters:
+          dot > 0
+            ? [{ name: "ArtLog file", extensions: [name.slice(dot + 1)] }]
+            : undefined,
       });
       if (typeof destination !== "string") return;
       setBusy(true);
@@ -1439,9 +1429,7 @@ export default function App() {
                   {error}
                 </p>
               )}
-              <p className="compatibility">
-                For Clip Studio Paint <span>·</span> Photoshop
-              </p>
+              <p className="compatibility">Clip Studio Paint · .clip files</p>
             </div>
             <div
               className="art-card"
@@ -1672,13 +1660,26 @@ export default function App() {
                           if (file) openRestore(selectedCommit.id, file);
                         }}
                       />
-                      <PreviewComparison
-                        key={`${project.id}:${selectedCommit.id}:${selectedPath}`}
-                        projectId={project.id}
-                        currentCommit={selectedCommit}
-                        commits={project.commits}
-                        path={selectedPath}
-                      />
+                      {isClipFile(selectedPath) ? (
+                        <PreviewComparison
+                          key={`${project.id}:${selectedCommit.id}:${selectedPath}`}
+                          projectId={project.id}
+                          currentCommit={selectedCommit}
+                          commits={project.commits}
+                          path={selectedPath}
+                        />
+                      ) : selectedPath ? (
+                        <section
+                          className="compare-panel"
+                          aria-label="Archived file"
+                        >
+                          <div className="eyebrow">ARCHIVED FILE</div>
+                          <p className="section-description">
+                            Use Restore as a copy to recover this file from an
+                            earlier ArtLog project.
+                          </p>
+                        </section>
+                      ) : null}
                     </>
                   ) : (
                     <div className="detail-empty">
@@ -1780,9 +1781,8 @@ export default function App() {
               <strong title={restoreTarget.file.path}>
                 {restoreTarget.file.path}
               </strong>{" "}
-              with the selected historical version. Close it in Photoshop or
-              Clip Studio Paint first so the editor does not save over the
-              restored file.
+              with the selected historical version. Close it in Clip Studio
+              Paint first so the editor does not save over the restored file.
             </p>
             <p>
               ArtLog will save a safety snapshot of the current work before it
@@ -1935,13 +1935,9 @@ function VersionDetail({
               title={file.path}
             >
               <span
-                className={`file-glyph ${file.path.toLowerCase().endsWith(".clip") || file.path.toLowerCase().endsWith(".psd") ? "artwork" : ""}`}
+                className={`file-glyph ${isClipFile(file.path) ? "artwork" : ""}`}
               >
-                {file.path.toLowerCase().endsWith(".clip")
-                  ? "CLIP"
-                  : file.path.toLowerCase().endsWith(".psd")
-                    ? "PSD"
-                    : "FILE"}
+                {isClipFile(file.path) ? "CLIP" : "FILE"}
               </span>
               <span className="version-file-name">{file.path}</span>
               <span className="version-file-size">
@@ -1971,13 +1967,15 @@ function VersionDetail({
           <span>Restore as a copy</span>
           <span className="arrow">↗</span>
         </button>
-        <button
-          className="text-button restore-place"
-          disabled={busy || !selectedPath}
-          onClick={onRestoreInPlace}
-        >
-          Replace working file…
-        </button>
+        {isClipFile(selectedPath) && (
+          <button
+            className="text-button restore-place"
+            disabled={busy || !selectedPath}
+            onClick={onRestoreInPlace}
+          >
+            Replace working file…
+          </button>
+        )}
       </div>
       <p className="restore-safe-note">
         A separate copy is the safest way to bring back an earlier version.
@@ -2001,8 +1999,7 @@ function FilesView({
       <div className="eyebrow">PROJECT CONTENTS</div>
       <h2>Tracked files</h2>
       <p className="section-description">
-        ArtLog watches these files while you work. Companion assets only enter
-        history when you include them.
+        ArtLog watches Clip Studio Paint .clip files while you work.
       </p>
       {files.length === 0 ? (
         <div className="empty-card compact-empty">
@@ -2020,7 +2017,7 @@ function FilesView({
         <div className="tracked-list">
           {files.map((file) => (
             <div className="tracked-row" key={file.path}>
-              <span className={`file-glyph ${file.artwork ? "artwork" : ""}`}>
+              <span className="file-glyph artwork">
                 {fileName(file.path)
                   .split(".")
                   .at(-1)
@@ -2030,9 +2027,7 @@ function FilesView({
               <span className="tracked-name" title={file.path}>
                 {file.path}
               </span>
-              {file.artwork && (
-                <span className="scan-badge">SUPPORTED ART</span>
-              )}
+              <span className="scan-badge">CLIP STUDIO PAINT</span>
               <span
                 className={
                   tracked.has(file.path) ? "tracking-on" : "tracking-off"
@@ -2140,10 +2135,7 @@ function SettingsView({
         <div className="section-heading">
           <div>
             <h3>Files in history</h3>
-            <p>
-              Supported artwork is selected by default. Include companion files
-              when needed.
-            </p>
+            <p>Select the .clip files ArtLog should preserve.</p>
           </div>
           <span className="version-count">
             {settings.tracked.length} TRACKED
@@ -2159,7 +2151,7 @@ function SettingsView({
                   checked={tracked.has(file.path)}
                   onChange={() => onToggle(file.path)}
                 />
-                <span className={`file-glyph ${file.artwork ? "artwork" : ""}`}>
+                <span className="file-glyph artwork">
                   {fileName(file.path)
                     .split(".")
                     .at(-1)
@@ -2169,7 +2161,7 @@ function SettingsView({
                 <span className="scan-name" title={file.path}>
                   {file.path}
                 </span>
-                {file.artwork && <span className="scan-badge">ARTWORK</span>}
+                <span className="scan-badge">CLIP</span>
                 <span className="scan-size">{formatBytes(file.size)}</span>
               </label>
             ))

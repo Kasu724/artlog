@@ -65,11 +65,11 @@ fn repeated_save_notifications_create_one_history_entry() {
 #[test]
 fn startup_reconciliation_captures_a_save_made_while_closed() {
     let project = temp_dir("reopen");
-    fs::write(project.join("art.psd"), b"before").unwrap();
-    let repo = Repository::init(&project, vec!["art.psd".into()]).unwrap();
+    fs::write(project.join("art.clip"), b"before").unwrap();
+    let repo = Repository::init(&project, vec!["art.clip".into()]).unwrap();
     drop(repo);
 
-    fs::write(project.join("art.psd"), b"saved while ArtLog was closed").unwrap();
+    fs::write(project.join("art.clip"), b"saved while ArtLog was closed").unwrap();
     let repo = Arc::new(Repository::open(&project).unwrap());
     let (tx, rx) = mpsc::channel();
     let _handle = WatchHandle::start(repo.clone(), move |event| {

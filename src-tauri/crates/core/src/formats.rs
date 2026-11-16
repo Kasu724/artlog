@@ -1,8 +1,7 @@
-//! Read-only preview adapters. Original documents never enter an image decoder
-//! directly from the working tree; previews use addressed historical bytes.
-use crate::{Entry, Error, Repository, Result};
+//! Attach a flattened export to an archived Clip Studio Paint version.
+use crate::{is_clip_document, Entry, Error, Repository, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use image::{DynamicImage, ImageFormat, ImageReader, Limits, RgbImage};
+use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -10,7 +9,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const PREFIX_LIMIT: usize = 32 * 1024 * 1024;
 const EXPORT_LIMIT: usize = 48 * 1024 * 1024;
 const PNG_LIMIT: usize = 5 * 1024 * 1024;
 const MAX_PREVIEW_EDGE: u32 = 1024;
@@ -27,47 +25,20 @@ pub struct Preview {
     pub adapter_version: u8,
 }
 
-#[derive(Clone, Copy)]
-enum Adapter {
-    Psd,
-    Export,
-}
-
-impl Adapter {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Psd => "psd",
-            Self::Export => "export",
-        }
-    }
-}
-
 pub fn get(repo: &Repository, id: &str, path: &str) -> Result<Option<Preview>> {
-    let entry = repo.entry(id, path)?;
-    if let Some(preview) = cached(repo, &entry, Adapter::Export) {
-        return Ok(Some(preview));
-    }
-    if !Path::new(&entry.path)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("psd"))
-    {
+    if !is_clip_document(Path::new(path)) {
         return Ok(None);
     }
-    if let Some(preview) = cached(repo, &entry, Adapter::Psd) {
-        return Ok(Some(preview));
-    }
-    let prefix = repo.read_prefix(&entry, PREFIX_LIMIT)?;
-    let image = psd_preview(&prefix);
-    let Some(image) = image else { return Ok(None) };
-    let (preview, bytes) = encode(image, Adapter::Psd)?;
-    // A read-only or full disk must not prevent viewing an already decoded
-    // image. Saving this derived copy is best effort.
-    let _ = store(repo, &entry, Adapter::Psd, &bytes);
-    Ok(Some(preview))
+    let entry = repo.entry(id, path)?;
+    Ok(cached(repo, &entry))
 }
 
 pub fn attach(repo: &Repository, id: &str, path: &str, export: &Path) -> Result<Preview> {
+    if !is_clip_document(Path::new(path)) {
+        return Err(Error::Invalid(
+            "Previews can only be attached to Clip Studio Paint (.clip) files.".into(),
+        ));
+    }
     let entry = repo.entry(id, path)?;
     if !export.is_absolute() || !plain_file(export) {
         return Err(Error::Invalid("Choose a local PNG or JPEG export.".into()));
@@ -85,8 +56,8 @@ pub fn attach(repo: &Repository, id: &str, path: &str, export: &Path) -> Result<
                     .into(),
             )
         })?;
-    let (preview, bytes) = encode(image, Adapter::Export)?;
-    store(repo, &entry, Adapter::Export, &bytes)?;
+    let (preview, bytes) = encode(image)?;
+    store(repo, &entry, &bytes)?;
     Ok(preview)
 }
 
@@ -129,7 +100,7 @@ fn valid_dimensions(width: u32, height: u32) -> bool {
         && u64::from(width) * u64::from(height) <= MAX_SOURCE_PIXELS
 }
 
-fn encode(image: DynamicImage, adapter: Adapter) -> Result<(Preview, Vec<u8>)> {
+fn encode(image: DynamicImage) -> Result<(Preview, Vec<u8>)> {
     let image = if image.width().max(image.height()) > MAX_PREVIEW_EDGE {
         image.thumbnail(MAX_PREVIEW_EDGE, MAX_PREVIEW_EDGE)
     } else {
@@ -141,15 +112,15 @@ fn encode(image: DynamicImage, adapter: Adapter) -> Result<(Preview, Vec<u8>)> {
         .write_to(&mut output, ImageFormat::Png)
         .map_err(|err| Error::Invalid(format!("Could not create preview: {err}")))?;
     let bytes = output.into_inner();
-    Ok((make_preview(&bytes, width, height, adapter), bytes))
+    Ok((make_preview(&bytes, width, height), bytes))
 }
 
-fn make_preview(bytes: &[u8], width: u32, height: u32, adapter: Adapter) -> Preview {
+fn make_preview(bytes: &[u8], width: u32, height: u32) -> Preview {
     Preview {
         data_url: format!("data:image/png;base64,{}", STANDARD.encode(bytes)),
         width,
         height,
-        adapter: adapter.name(),
+        adapter: "export",
         adapter_version: 1,
     }
 }
@@ -195,16 +166,12 @@ fn preview_dir(repo: &Repository, create: bool) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn cache_filename(entry: &Entry, adapter: Adapter) -> String {
-    // Both are strictly derived: the repository validates the full historical
-    // BLAKE3 ID and the adapter has a fixed name/version.
-    format!("{}-{}-v1.bin", entry.hash, adapter.name())
+fn cache_filename(entry: &Entry) -> String {
+    format!("{}-export-v1.bin", entry.hash)
 }
 
-fn cached(repo: &Repository, entry: &Entry, adapter: Adapter) -> Option<Preview> {
-    let path = preview_dir(repo, false)
-        .ok()?
-        .join(cache_filename(entry, adapter));
+fn cached(repo: &Repository, entry: &Entry) -> Option<Preview> {
+    let path = preview_dir(repo, false).ok()?.join(cache_filename(entry));
     if !plain_file(&path) {
         return None;
     }
@@ -217,12 +184,12 @@ fn cached(repo: &Repository, entry: &Entry, adapter: Adapter) -> Option<Preview>
     if width.min(height) == 0 || width.max(height) > MAX_PREVIEW_EDGE {
         return None;
     }
-    Some(make_preview(bytes, width, height, adapter))
+    Some(make_preview(bytes, width, height))
 }
 
-fn store(repo: &Repository, entry: &Entry, adapter: Adapter, bytes: &[u8]) -> Result<()> {
+fn store(repo: &Repository, entry: &Entry, bytes: &[u8]) -> Result<()> {
     let dir = preview_dir(repo, true)?;
-    let path = dir.join(cache_filename(entry, adapter));
+    let path = dir.join(cache_filename(entry));
     let mut staged = tempfile::Builder::new()
         .prefix(".preview-")
         .tempfile_in(&dir)
@@ -238,88 +205,4 @@ fn store(repo: &Repository, entry: &Entry, adapter: Adapter, bytes: &[u8]) -> Re
         .persist(&path)
         .map_err(|err| Error::io("save preview", &path, err.error))?;
     Ok(())
-}
-
-fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
-    Some(u16::from_be_bytes(
-        bytes.get(at..at.checked_add(2)?)?.try_into().ok()?,
-    ))
-}
-
-fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_be_bytes(
-        bytes.get(at..at.checked_add(4)?)?.try_into().ok()?,
-    ))
-}
-
-fn psd_preview(bytes: &[u8]) -> Option<DynamicImage> {
-    // Adobe Photoshop File Formats Specification: PSD v1, image resource
-    // blocks, resource 1036 (28-byte thumbnail header followed by RGB JPEG).
-    if bytes.get(..4)? != b"8BPS" || u16_at(bytes, 4)? != 1 {
-        return None;
-    }
-    let resource_section = 30usize.checked_add(u32_at(bytes, 26)? as usize)?;
-    let resource_start = resource_section.checked_add(4)?;
-    let resource_end = resource_start.checked_add(u32_at(bytes, resource_section)? as usize)?;
-    let mut cursor = resource_start;
-    while cursor < resource_end {
-        if bytes.get(cursor..cursor.checked_add(4)?)? != b"8BIM" {
-            break;
-        }
-        let id = u16_at(bytes, cursor.checked_add(4)?)?;
-        let name_start = cursor.checked_add(6)?;
-        let name_length = usize::from(*bytes.get(name_start)?) + 1;
-        let size_at = name_start.checked_add(name_length.next_multiple_of(2))?;
-        let size = u32_at(bytes, size_at)? as usize;
-        let start = size_at.checked_add(4)?;
-        let end = start.checked_add(size)?;
-        if end > resource_end {
-            return None;
-        }
-        if id == 1036 {
-            let data = bytes.get(start..end)?;
-            if u32_at(data, 0) == Some(1) {
-                let size = u32_at(data, 20)? as usize;
-                if let Some(preview) = data
-                    .get(28..28usize.checked_add(size)?)
-                    .and_then(|jpeg| decode(jpeg, ImageFormat::Jpeg))
-                {
-                    return Some(preview);
-                }
-            }
-        }
-        cursor = end.checked_add(size % 2)?;
-    }
-    // A bounded fallback for raw 8-bit RGB/grayscale merged pixels. We never
-    // interpret layers, extra channels, other modes or unknown compression.
-    let mode = u16_at(bytes, 24)?;
-    if u16_at(bytes, 22)? != 8 || !matches!(mode, 1 | 3) {
-        return None;
-    }
-    let channels = if mode == 3 { 3 } else { 1 };
-    if u16_at(bytes, 12)? != channels {
-        return None;
-    }
-    let (width, height) = (u32_at(bytes, 18)?, u32_at(bytes, 14)?);
-    if !valid_dimensions(width, height) || width.max(height) > 4096 {
-        return None;
-    }
-    let compression = resource_end
-        .checked_add(4)?
-        .checked_add(u32_at(bytes, resource_end)? as usize)?;
-    if u16_at(bytes, compression)? != 0 {
-        return None;
-    }
-    let start = compression.checked_add(2)?;
-    let plane = width as usize * height as usize;
-    let data = bytes.get(start..start.checked_add(plane * usize::from(channels))?)?;
-    let rgb = RgbImage::from_fn(width, height, |x, y| {
-        let i = x as usize + y as usize * width as usize;
-        if channels == 3 {
-            image::Rgb([data[i], data[i + plane], data[i + plane * 2]])
-        } else {
-            image::Rgb([data[i]; 3])
-        }
-    });
-    Some(DynamicImage::ImageRgb8(rgb))
 }

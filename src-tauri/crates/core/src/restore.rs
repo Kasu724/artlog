@@ -1,6 +1,6 @@
 //! Keep one owner for working-file replacement. A journal is committed before
 //! displacing the original; recovery never assumes the editor stopped writing.
-use crate::{hash_file, Error, Kind, Repository, Result};
+use crate::{hash_file, is_clip_document, Error, Kind, Repository, Result};
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -136,6 +136,11 @@ pub fn in_place(
     if path != confirmed_target {
         return Err(Error::Invalid(
             "Confirm the exact working file before replacing it.".into(),
+        ));
+    }
+    if !is_clip_document(Path::new(path)) {
+        return Err(Error::Invalid(
+            "This file is from an older project. Restore it as a copy.".into(),
         ));
     }
     let _guard = repo.with_write_lock()?;

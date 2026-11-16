@@ -1,5 +1,11 @@
 # ArtLog releases
 
+## Unreleased
+
+- Track and capture Clip Studio Paint (`.clip`) files. Attach PNG or JPEG
+  exports for visual comparisons.
+- Restore historical files of other formats as verified copies.
+
 ## 0.1.0
 
 - Start or reopen a local project, select artwork and companion files, and

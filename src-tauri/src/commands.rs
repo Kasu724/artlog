@@ -1,7 +1,7 @@
 use artlog_core::{
     formats::{self, Preview},
     index::ProjectIndex,
-    restore,
+    is_clip_document, restore,
     watcher::{WatchHandle, WatchState},
     Commit, Health, Kind, Repository, ScanEntry, Settings,
 };
@@ -453,6 +453,9 @@ pub(crate) async fn comparison_versions(
     path: String,
 ) -> Reply<Vec<String>> {
     on_project(state, project_id, move |repo| {
+        if !is_clip_document(Path::new(&path)) {
+            return Ok(Vec::new());
+        }
         Ok(repo
             .history()
             .map_err(message)?

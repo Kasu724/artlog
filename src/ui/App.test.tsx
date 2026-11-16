@@ -24,10 +24,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: saveMock,
 }));
 
-const files: ScanEntry[] = [
-  { path: "painting.clip", artwork: true, size: 24576 },
-  { path: "references/photo.jpg", artwork: false, size: 8192 },
-];
+const files: ScanEntry[] = [{ path: "painting.clip", size: 24576 }];
 
 function project(commits: ProjectView["commits"]): ProjectView {
   return {
@@ -90,7 +87,7 @@ function wireProject(result = project([secondCommit, firstCommit])) {
           width: 32,
           height: 32,
           adapter: "export",
-          adapterVersion: "attached",
+          adapterVersion: 1,
         });
       case "project_view":
         return Promise.resolve(result);
@@ -154,7 +151,7 @@ describe("ArtLog desktop workflows", () => {
     });
   });
 
-  it("lets an artist include companion files while creating a project", async () => {
+  it("selects discovered Clip Studio Paint files when creating a project", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "scan_project")
         return Promise.resolve({ exists: false, files });
@@ -183,14 +180,13 @@ describe("ArtLog desktop workflows", () => {
       screen.getByRole("button", { name: /open a project folder/i }),
     );
     await screen.findByRole("heading", { name: /choose what artlog tracks/i });
-    fireEvent.click(screen.getByLabelText("references/photo.jpg"));
     fireEvent.click(
       screen.getByRole("button", { name: /create artlog project/i }),
     );
     await screen.findByRole("heading", { name: "Timeline" });
     expect(invokeMock).toHaveBeenCalledWith("activate_project", {
       root: "C:\\art\\moss study",
-      tracked: ["painting.clip", "references/photo.jpg"],
+      tracked: ["painting.clip"],
     });
   });
 
@@ -301,7 +297,7 @@ describe("ArtLog desktop workflows", () => {
     );
     expect(
       await screen.findByText(
-        /artist-provided export · approximate visual reference/i,
+        /artist-provided png\/jpeg export · approximate visual reference/i,
       ),
     ).toBeTruthy();
   });
@@ -311,8 +307,8 @@ describe("ArtLog desktop workflows", () => {
       dataUrl: "data:image/png;base64,AA==",
       width: 32,
       height: 32,
-      adapter: "psd" as const,
-      adapterVersion: "test-1",
+      adapter: "export" as const,
+      adapterVersion: 1,
     };
     invokeMock.mockImplementation(
       (command: string, args?: Record<string, unknown>) => {
@@ -427,16 +423,14 @@ describe("ArtLog desktop workflows", () => {
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
     await openExistingProject();
-    const replace = screen.getByRole("button", {
+    const replace = await screen.findByRole("button", {
       name: /replace working file/i,
     });
     await waitFor(() => expect(replace.hasAttribute("disabled")).toBe(false));
     fireEvent.click(replace);
     const dialog = await screen.findByRole("dialog");
     expect(
-      within(dialog).getByText(
-        /close it in photoshop or clip studio paint first/i,
-      ),
+      within(dialog).getByText(/close it in clip studio paint first/i),
     ).toBeTruthy();
     const confirm = within(dialog).getByRole("button", {
       name: /replace with this version/i,
@@ -458,7 +452,7 @@ describe("ArtLog desktop workflows", () => {
   it("saves tracking and automatic-capture settings", async () => {
     const saved = project([secondCommit, firstCommit]);
     saved.settings = {
-      tracked: ["painting.clip", "references/photo.jpg"],
+      tracked: ["painting.clip"],
       autoCapture: false,
       debounceMs: 2500,
     };
@@ -490,16 +484,70 @@ describe("ArtLog desktop workflows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByLabelText("Automatic capture"));
     fireEvent.change(screen.getByRole("slider"), { target: { value: "2500" } });
-    fireEvent.click(screen.getByLabelText("references/photo.jpg"));
     fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith("save_settings", {
         projectId: "project-1",
         settings: {
-          tracked: ["painting.clip", "references/photo.jpg"],
+          tracked: ["painting.clip"],
           autoCapture: false,
           debounceMs: 2500,
         },
+      }),
+    );
+  });
+
+  it("keeps historical non-CLIP files copy-only and without previews", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      switch (command) {
+        case "scan_project":
+          return Promise.resolve({ exists: true, files: [] });
+        case "activate_project":
+          return Promise.resolve(project([secondCommit, firstCommit]));
+        case "project_files":
+          return Promise.resolve(files);
+        case "project_state":
+          return Promise.resolve({
+            head: "v2",
+            capture: {
+              projectId: "project-1",
+              state: "current",
+              message: "Up to date",
+            },
+          });
+        case "repository_health":
+          return Promise.resolve({ versions: 2, objects: 2 });
+        case "list_commit_files":
+          return Promise.resolve([
+            { path: "old-work.psd", size: 128, hash: "b".repeat(64) },
+          ]);
+        case "restore_copy":
+          return Promise.resolve("C:\\art\\old-work-copy.psd");
+        default:
+          return Promise.reject(new Error(`Unexpected command: ${command}`));
+      }
+    });
+    saveMock.mockResolvedValue("C:\\art\\old-work-copy.psd");
+    await openExistingProject();
+    expect(await screen.findByText("ARCHIVED FILE")).toBeTruthy();
+    expect(screen.getByText("old-work.psd")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /replace working file/i }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /attach png\/jpeg export/i }),
+    ).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "get_preview",
+      expect.anything(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /restore as a copy/i }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("restore_copy", {
+        projectId: "project-1",
+        id: "v2",
+        path: "old-work.psd",
+        destination: "C:\\art\\old-work-copy.psd",
       }),
     );
   });

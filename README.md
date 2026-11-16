@@ -1,7 +1,7 @@
 # ArtLog
 
-ArtLog is a local desktop companion for Clip Studio Paint (`.clip`) and
-Photoshop (`.psd`) projects. It keeps exact copies of saved artwork so you can
+ArtLog is a local desktop companion for Clip Studio Paint (`.clip`) projects.
+It keeps exact copies of saved artwork so you can
 experiment and get back to an earlier version. Artwork stays on your computer.
 ArtLog needs no account, telemetry service, or network connection to work.
 ArtLog does not implement artwork uploads or analytics. On Windows,
@@ -12,28 +12,28 @@ has no outbound traffic when the device is connected.
 
 ## Use ArtLog
 
-1. Open an existing project folder and review the selected artwork. You can
-   also track companion files explicitly; ArtLog does not find external links
-   for you.
-2. Keep editing in your art app. ArtLog captures stable saves on the **main**
+1. Open a project folder and select the Clip Studio Paint files you want to track.
+2. Keep editing in Clip Studio Paint. ArtLog captures stable saves on the **main**
    timeline and skips identical automatic snapshots. Use **New checkpoint** to
    name a milestone and add a note. Change tracking and save delay in Settings.
 3. Select a version and file to inspect, compare, or restore. **Restore as copy**
-   is the default; it checks the restored bytes and refuses to overwrite an
-   existing file. To replace a working file, close it in the art app, confirm
+   is the default. It checks the restored bytes and refuses to overwrite an
+   existing file. To replace a working file, close it in Clip Studio Paint, confirm
    the named target, and let ArtLog record its safety snapshot first.
 
-Preview support is best effort. ArtLog reads the
-[documented Photoshop thumbnail](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/)
-or a supported uncompressed 8-bit merged PSD image. For `.clip` or other
-unavailable previews, export the selected historical version as PNG or JPEG
-from your art app and attach it. Previews are flattened, scaled to at most
+To preview a version, export it as PNG or JPEG from Clip Studio Paint and
+attach the export in ArtLog. Use **Restore as copy** to open and export an
+older version. Previews are flattened, scaled to at most
 1,024 pixels on the long edge, and may not match editor color management.
 Two available previews can be panned and zoomed together. Matching dimensions
 allow overlay and pixel difference. All versions remain exactly restorable
 when previews are missing.
 
 ## Backup and recovery
+
+Projects from earlier builds can still open and browse their full history.
+Earlier snapshots of other file types remain available through **Restore as
+copy**. New snapshots capture tracked `.clip` files.
 
 Copy the entire project folder, including **`.artlog/`**, while ArtLog and
 the art app are closed. The SQLite index in your local application data can
@@ -86,9 +86,9 @@ sign or notarize the app.
 ArtLog targets local disks on Windows and macOS. In-place restore works one
 file at a time and requires a filesystem with hard links (such as NTFS or
 APFS). Use a copy for removable drives, network shares, or other filesystems.
-`.psb`, branches, merges, and cloud sync are outside this release. ArtLog
+Branches, merges, and cloud sync are outside this release. ArtLog
 supports repository format 1 and refuses unsupported format versions without
-migrating them. ArtLog is independent of Adobe and CELSYS.
+migrating them. ArtLog is independent of CELSYS.
 
 ArtLog is licensed under the [MIT License](LICENSE). Desktop packages include
 third-party notices and links to exact versions of bundled dependencies.
