@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Local-first history for digital art projects"
 authors = ["ArtLog contributors"]
 edition = "2021"
-rust-version = "1.77.2"
+license = "MIT"
+
+[workspace]
+members = ["crates/core"]
+default-members = ["."]
+resolver = "2"
 
 [lib]
 name = "artlog_lib"
@@ -14,7 +19,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+artlog-core = { path = "crates/core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
-thiserror = "2"
