@@ -4,6 +4,11 @@ ArtLog is a local desktop companion for Clip Studio Paint (`.clip`) and
 Photoshop (`.psd`) projects. It keeps exact copies of saved artwork so you can
 experiment and get back to an earlier version. Artwork stays on your computer.
 ArtLog needs no account, telemetry service, or network connection to work.
+ArtLog does not implement artwork uploads or analytics. On Windows,
+[Microsoft's WebView2 runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/data-privacy)
+may make its own network requests and report diagnostics according to
+Windows settings. Offline operation does not imply that the OS runtime
+has no outbound traffic when the device is connected.
 
 ## Use ArtLog
 

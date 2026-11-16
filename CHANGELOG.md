@@ -17,4 +17,8 @@ The Windows x64 bundle is an unsigned NSIS installer and expects WebView2.
 The macOS DMG workflow is configured; a macOS host and signing credentials
 are needed to complete macOS launch, editor, and distribution verification.
 Windows smoke coverage uses a real save from Clip Studio Paint and a synthetic
-PSD fixture. Photoshop itself was not available on the Windows test host.
+PSD fixture. The final build reopened history, rendered a PSD comparison,
+and passed independent byte checks for a restored copy, an in-place
+replacement, and its safety checkpoint. Photoshop itself was not available
+on the Windows test host. WebView2 opened its own outbound connections
+during the smoke test, so this is not a zero-egress certification.
