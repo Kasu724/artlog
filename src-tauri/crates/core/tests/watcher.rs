@@ -108,3 +108,25 @@ fn disabled_capture_pauses_then_rescan_catches_changes() {
     receive_capture(&rx, Duration::from_secs(8));
     assert_eq!(repo.history().unwrap().len(), 2);
 }
+
+#[test]
+fn rename_omits_old_working_path_without_losing_its_history() {
+    let project = tempfile::tempdir().unwrap();
+    let before = project.path().join("Old.clip");
+    let after = project.path().join("Renamed.clip");
+    fs::write(&before, b"renamed artwork").unwrap();
+    let repo = Arc::new(Repository::init(project.path(), vec!["Old.clip".into()]).unwrap());
+    let baseline = repo.head().unwrap().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let _handle = WatchHandle::start(repo.clone(), move |event| {
+        let _ = tx.send(event);
+    })
+    .unwrap();
+    fs::rename(before, &after).unwrap();
+    receive_capture(&rx, Duration::from_secs(8));
+    assert!(repo.history().unwrap()[0].files.is_empty());
+    let mut output = Vec::new();
+    repo.reconstruct(&repo.entry(&baseline, "Old.clip").unwrap(), &mut output)
+        .unwrap();
+    assert_eq!(output, fs::read(after).unwrap());
+}

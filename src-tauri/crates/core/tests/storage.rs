@@ -1,5 +1,8 @@
 use artlog_core::{Error, Kind, Repository};
-use std::{fs, io::Write};
+use std::{
+    fs,
+    io::{self, Write},
+};
 
 #[test]
 fn init_capture_reopen_deduplicate_and_reconstruct_exact_bytes() {
@@ -26,6 +29,15 @@ fn init_capture_reopen_deduplicate_and_reconstruct_exact_bytes() {
         .unwrap()
         .unwrap();
     assert_eq!(checkpoint.files.len(), 2);
+    assert_eq!(checkpoint.manifest_id, captured.manifest_id);
+    let record = fs::read_to_string(
+        reopened
+            .metadata()
+            .join("commits")
+            .join(format!("{}.json", checkpoint.id)),
+    )
+    .unwrap();
+    assert!(!record.contains("\"files\""));
     assert_eq!(reopened.history().unwrap().len(), 3);
     assert_eq!(reopened.health().unwrap().versions, 3);
 }
@@ -49,6 +61,63 @@ fn corrupt_chunk_is_rejected_before_reconstruction_succeeds() {
     let err = repo.reconstruct(&entry, &mut Vec::new()).unwrap_err();
     assert!(matches!(err, Error::Corrupt(_)));
     assert!(matches!(repo.health().unwrap_err(), Error::Corrupt(_)));
+}
+
+#[test]
+fn finds_explicit_companions_and_captures_a_long_unicode_path() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path().canonicalize().unwrap();
+    let prefix = "画".repeat(78);
+    let deep = ["one", "two", "three", "four"]
+        .map(|component| format!("{component}-{prefix}"))
+        .join("/");
+    let art = format!("{deep}/夜.psd");
+    fs::create_dir_all(root.join(&deep)).unwrap();
+    fs::write(root.join(&art), b"layered art").unwrap();
+    fs::write(root.join("palette.txt"), b"palette companion").unwrap();
+    fs::write(root.join("temp.TMP"), b"editor scratch").unwrap();
+    let found = Repository::scan(&root).unwrap();
+    assert!(found.iter().any(|file| file.path == art && file.artwork));
+    assert!(found
+        .iter()
+        .any(|file| file.path == "palette.txt" && !file.artwork));
+    assert!(!found.iter().any(|file| file.path == "temp.TMP"));
+    let repo = Repository::init(&root, vec![art.clone()]).unwrap();
+    let id = repo.head().unwrap().unwrap();
+    assert!(repo.entry(&id, "palette.txt").is_err());
+    let mut output = Vec::new();
+    repo.reconstruct(&repo.entry(&id, &art).unwrap(), &mut output)
+        .unwrap();
+    assert_eq!(output, b"layered art");
+}
+
+#[test]
+fn interrupted_restore_write_reports_disk_full_and_leaves_history_intact() {
+    struct FullDisk;
+    impl Write for FullDisk {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::StorageFull,
+                "fixture disk is full",
+            ))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    fs::write(root.join("art.psd"), b"historical").unwrap();
+    let repo = Repository::init(root, vec!["art.psd".into()]).unwrap();
+    let id = repo.head().unwrap().unwrap();
+    let entry = repo.entry(&id, "art.psd").unwrap();
+    assert!(matches!(
+        repo.reconstruct(&entry, &mut FullDisk),
+        Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::StorageFull
+    ));
+    assert_eq!(repo.head().unwrap().as_deref(), Some(id.as_str()));
+    assert_eq!(fs::read(root.join("art.psd")).unwrap(), b"historical");
+    assert_eq!(repo.health().unwrap().versions, 1);
 }
 
 #[test]

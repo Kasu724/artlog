@@ -13,6 +13,8 @@ export type CaptureStatus = {
   message: string;
 };
 
+export type ProjectState = { head: string | null; capture: CaptureStatus };
+
 export type CommitKind =
   "baseline" | "auto" | "checkpoint" | "safety" | "restore";
 
@@ -58,5 +60,13 @@ export type RestoreOutcome = {
 };
 
 export type RepositoryHealth = { versions: number; objects: number };
+
+export type Preview = {
+  dataUrl: string;
+  width: number;
+  height: number;
+  adapter: "psd" | "export";
+  adapterVersion: string;
+};
 
 export type ViewName = "history" | "files" | "settings";

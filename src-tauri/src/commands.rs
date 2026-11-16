@@ -1,4 +1,5 @@
 use artlog_core::{
+    formats::{self, Preview},
     index::ProjectIndex,
     restore,
     watcher::{WatchHandle, WatchState},
@@ -162,6 +163,13 @@ struct CaptureStatus {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectState {
+    head: Option<String>,
+    capture: CaptureStatus,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct VersionFile {
     path: String,
     size: u64,
@@ -304,6 +312,20 @@ pub(crate) async fn project_view(
 }
 
 #[tauri::command]
+pub(crate) async fn project_state(
+    state: State<'_, Desktop>,
+    project_id: String,
+) -> Reply<ProjectState> {
+    on_project(state, project_id, |repo| {
+        Ok(ProjectState {
+            head: repo.head().map_err(message)?,
+            capture: repo.capture.lock().map_err(message)?.clone(),
+        })
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn project_files(
     state: State<'_, Desktop>,
     project_id: String,
@@ -409,4 +431,49 @@ pub(crate) async fn repository_health(
     project_id: String,
 ) -> Reply<Health> {
     on_project(state, project_id, |repo| repo.health().map_err(message)).await
+}
+
+#[tauri::command]
+pub(crate) async fn get_preview(
+    state: State<'_, Desktop>,
+    project_id: String,
+    id: String,
+    path: String,
+) -> Reply<Option<Preview>> {
+    on_project(state, project_id, move |repo| {
+        formats::get(repo, &id, &path).map_err(message)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn comparison_versions(
+    state: State<'_, Desktop>,
+    project_id: String,
+    path: String,
+) -> Reply<Vec<String>> {
+    on_project(state, project_id, move |repo| {
+        Ok(repo
+            .history()
+            .map_err(message)?
+            .into_iter()
+            .filter(|commit| commit.files.iter().any(|file| file.path == path))
+            .map(|commit| commit.id)
+            .collect())
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn attach_preview(
+    state: State<'_, Desktop>,
+    project_id: String,
+    id: String,
+    path: String,
+    image_path: String,
+) -> Reply<Preview> {
+    on_project(state, project_id, move |repo| {
+        formats::attach(repo, &id, &path, Path::new(&image_path)).map_err(message)
+    })
+    .await
 }

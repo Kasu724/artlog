@@ -81,6 +81,7 @@ pub struct Commit {
     pub note: String,
     pub kind: Kind,
     pub manifest_id: String,
+    #[serde(default)]
     pub files: Vec<Entry>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -219,31 +220,36 @@ impl Repository {
     }
     pub fn commit(&self, id: &str) -> Result<Commit> {
         valid_id(id)?;
-        let c: Commit = read_json(&self.metadata.join("commits").join(format!("{id}.json")))?;
-        if c.id != id
-            || c.parent.as_deref().is_some_and(|p| valid_id(p).is_err())
-            || commit_digest(&c)? != id
-        {
+        check_directory(&self.metadata)?;
+        check_directory(&self.metadata.join("commits"))?;
+        check_directory(&self.metadata.join("manifests"))?;
+        let mut c: Commit = read_json(&self.metadata.join("commits").join(format!("{id}.json")))?;
+        valid_id(&c.manifest_id)?;
+        if c.id != id || c.parent.as_deref().is_some_and(|p| valid_id(p).is_err()) {
             return Err(Error::Corrupt(format!(
                 "invalid commit identity or parent: {id}"
             )));
         }
         chrono::DateTime::parse_from_rfc3339(&c.timestamp)
             .map_err(|_| Error::Corrupt(format!("invalid timestamp in commit {id}")))?;
-        let bytes = serde_json::to_vec(&c.files).map_err(|e| Error::Corrupt(e.to_string()))?;
-        if blake3::hash(&bytes).to_hex().as_str() != c.manifest_id {
-            return Err(Error::Corrupt(format!(
-                "manifest hash mismatch in commit {id}"
-            )));
-        }
         let manifest: Vec<Entry> = read_json(
             &self
                 .metadata
                 .join("manifests")
                 .join(format!("{}.json", c.manifest_id)),
         )?;
-        if manifest != c.files {
+        if !c.files.is_empty() && manifest != c.files {
             return Err(Error::Corrupt(format!("commit manifest differs for {id}")));
+        }
+        let bytes = serde_json::to_vec(&manifest).map_err(|e| Error::Corrupt(e.to_string()))?;
+        if blake3::hash(&bytes).to_hex().as_str() != c.manifest_id {
+            return Err(Error::Corrupt(format!(
+                "manifest hash mismatch in commit {id}"
+            )));
+        }
+        c.files = manifest;
+        if commit_digest(&c)? != id {
+            return Err(Error::Corrupt(format!("commit hash mismatch: {id}")));
         }
         let mut paths = std::collections::HashSet::new();
         for entry in &c.files {
@@ -288,7 +294,8 @@ impl Repository {
             .map_err(|e| Error::io("open repository lock", &path, e))?;
         file.try_lock_exclusive().map_err(|e| {
             if e.kind() == io::ErrorKind::WouldBlock
-                || e.raw_os_error().is_some_and(|code| Some(code) == fs2::lock_contended_error().raw_os_error())
+                || e.raw_os_error()
+                    .is_some_and(|code| Some(code) == fs2::lock_contended_error().raw_os_error())
             {
                 Error::Busy
             } else {
@@ -453,7 +460,9 @@ impl Repository {
                     )))
                 }
                 Ok(m) if components.peek().is_none() && !m.is_file() => {
-                    return Err(Error::Invalid(format!("Tracked path is not a regular file: {path}")))
+                    return Err(Error::Invalid(format!(
+                        "Tracked path is not a regular file: {path}"
+                    )))
                 }
                 Ok(_) => {}
                 Err(e) if e.kind() == io::ErrorKind::NotFound => found = false,
@@ -532,15 +541,16 @@ impl Repository {
         Ok(())
     }
     pub fn head(&self) -> Result<Option<String>> {
-        let refname = fs::read_to_string(self.metadata.join("HEAD"))
-            .map_err(|e| Error::io("read HEAD", self.metadata.join("HEAD"), e))?;
+        check_directory(&self.metadata)?;
+        check_directory(&self.metadata.join("refs"))?;
+        check_directory(&self.metadata.join("refs/heads"))?;
+        let refname = read_ref(&self.metadata.join("HEAD"))?;
         let line = refname.trim();
         if line != "main" {
             return Err(Error::Corrupt("HEAD must name main".into()));
         }
         let path = self.metadata.join("refs/heads/main");
-        let id =
-            fs::read_to_string(&path).map_err(|e| Error::io("read main history ref", &path, e))?;
+        let id = read_ref(&path)?;
         let id = id.trim();
         if id.is_empty() {
             Ok(None)
@@ -720,8 +730,18 @@ impl Repository {
             .metadata
             .join("manifests")
             .join(format!("{manifest_id}.json"));
-        if !manifest_path.exists() {
-            atomic_write(&manifest_path, &manifest_bytes)?;
+        match manifest_path.symlink_metadata() {
+            Ok(_) => {
+                if read_json::<Vec<Entry>>(&manifest_path)? != files {
+                    return Err(Error::Corrupt(format!(
+                        "Stored manifest is invalid: {manifest_id}"
+                    )));
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                atomic_write(&manifest_path, &manifest_bytes)?;
+            }
+            Err(err) => return Err(Error::io("inspect stored manifest", &manifest_path, err)),
         }
         let timestamp = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
         let title = if title.trim().is_empty() {
@@ -748,9 +768,16 @@ impl Repository {
         };
         let id = commit_digest(&c)?;
         c.id = id.clone();
+        let mut record = serde_json::to_value(&c).map_err(|e| Error::Corrupt(e.to_string()))?;
+        // Store file lists once, under their manifest hash. The commit digest
+        // still covers the resolved list and accepts earlier format-1 records.
+        record
+            .as_object_mut()
+            .expect("commit record is an object")
+            .remove("files");
         atomic_json(
             &self.metadata.join("commits").join(format!("{id}.json")),
-            &c,
+            &record,
         )?;
         atomic_write(
             &self.metadata.join("refs/heads/main"),
@@ -993,8 +1020,28 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
             path.display()
         )));
     }
-    let b = fs::read(path).map_err(|e| Error::io("read repository metadata", path, e))?;
+    let mut b = Vec::new();
+    open_source(path)
+        .and_then(|file| file.take(64 * 1024 * 1024 + 1).read_to_end(&mut b))
+        .map_err(|e| Error::io("read repository metadata", path, e))?;
+    if b.len() > 64 * 1024 * 1024 {
+        return Err(Error::Corrupt(format!(
+            "Metadata is too large: {}",
+            path.display()
+        )));
+    }
     serde_json::from_slice(&b).map_err(|e| Error::Corrupt(format!("{}: {e}", path.display())))
+}
+
+fn read_ref(path: &Path) -> Result<String> {
+    let mut text = String::new();
+    open_source(path)
+        .and_then(|file| file.take(257).read_to_string(&mut text))
+        .map_err(|e| Error::io("read history pointer", path, e))?;
+    if text.len() > 256 {
+        return Err(Error::Corrupt("A history pointer is too large.".into()));
+    }
+    Ok(text)
 }
 fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScanEntry>) -> Result<()> {
     for e in fs::read_dir(dir).map_err(|e| Error::io("scan project", dir, e))? {
@@ -1045,6 +1092,10 @@ fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScanEntry>) -> Result<()> {
 fn walk_size(p: &Path, sum: &mut u64) -> Result<()> {
     for e in fs::read_dir(p).map_err(|e| Error::io("measure repository", p, e))? {
         let e = e.map_err(|e| Error::io("measure repository entry", p, e))?;
+        // Optional derived files cannot make the version timeline inaccessible.
+        if e.file_name() == "previews" {
+            continue;
+        }
         let m = fs::symlink_metadata(e.path())
             .map_err(|e| Error::io("measure repository item", p, e))?;
         if is_link(&m) {
@@ -1064,6 +1115,7 @@ fn gear(b: u8) -> u64 {
     x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
     x ^ (x >> 31)
 }
+pub mod formats;
 pub mod index;
 pub mod restore;
 pub mod watcher;

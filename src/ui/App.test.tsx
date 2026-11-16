@@ -80,8 +80,29 @@ function wireProject(result = project([secondCommit, firstCommit])) {
         return Promise.resolve([
           { path: "painting.clip", size: 24576, hash: "abcdef0123456789" },
         ]);
+      case "comparison_versions":
+        return Promise.resolve(result.commits.map((commit) => commit.id));
+      case "get_preview":
+        return Promise.resolve(null);
+      case "attach_preview":
+        return Promise.resolve({
+          dataUrl: "data:image/png;base64,AA==",
+          width: 32,
+          height: 32,
+          adapter: "export",
+          adapterVersion: "attached",
+        });
       case "project_view":
         return Promise.resolve(result);
+      case "project_state":
+        return Promise.resolve({
+          head: result.commits[0]?.id ?? null,
+          capture: {
+            projectId: result.id,
+            state: "current",
+            message: "Up to date",
+          },
+        });
       case "create_checkpoint":
         return Promise.resolve(result);
       case "restore_copy":
@@ -140,6 +161,15 @@ describe("ArtLog desktop workflows", () => {
       if (command === "activate_project")
         return Promise.resolve(project([firstCommit]));
       if (command === "project_files") return Promise.resolve(files);
+      if (command === "project_state")
+        return Promise.resolve({
+          head: "baseline",
+          capture: {
+            projectId: "project-1",
+            state: "current",
+            message: "Up to date",
+          },
+        });
       if (command === "repository_health")
         return Promise.resolve({ versions: 1, objects: 1 });
       if (command === "list_commit_files")
@@ -176,6 +206,15 @@ describe("ArtLog desktop workflows", () => {
       if (command === "activate_project")
         return Promise.resolve(project([secondCommit, firstCommit]));
       if (command === "project_files") return Promise.resolve(files);
+      if (command === "project_state")
+        return Promise.resolve({
+          head: "v2",
+          capture: {
+            projectId: "project-1",
+            state: "current",
+            message: "Up to date",
+          },
+        });
       if (command === "repository_health")
         return Promise.resolve({ versions: 2, objects: 2 });
       if (command === "list_commit_files")
@@ -224,6 +263,137 @@ describe("ArtLog desktop workflows", () => {
     expect(screen.getByText(/restored a verified copy/i)).toBeTruthy();
   });
 
+  it("keeps exact restore available when a preview is unavailable", async () => {
+    await openExistingProject();
+    expect(
+      await screen.findByText(/no preview saved for this version/i),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("get_preview", {
+        projectId: "project-1",
+        id: "v2",
+        path: "painting.clip",
+      }),
+    );
+    expect(
+      screen
+        .getByRole("button", { name: /restore as a copy/i })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+  });
+
+  it("attaches a chosen PNG export to the selected version and file", async () => {
+    openMock
+      .mockResolvedValueOnce("C:\\art\\moss study")
+      .mockResolvedValueOnce("C:\\art\\flattened.png");
+    await openExistingProject();
+    await screen.findByText(/no preview saved for this version/i);
+    fireEvent.click(
+      screen.getByRole("button", { name: /attach png\/jpeg export/i }),
+    );
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("attach_preview", {
+        projectId: "project-1",
+        id: "v2",
+        path: "painting.clip",
+        imagePath: "C:\\art\\flattened.png",
+      }),
+    );
+    expect(
+      await screen.findByText(
+        /artist-provided export · approximate visual reference/i,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("compares a matching earlier version with shared zoom controls", async () => {
+    const preview = {
+      dataUrl: "data:image/png;base64,AA==",
+      width: 32,
+      height: 32,
+      adapter: "psd" as const,
+      adapterVersion: "test-1",
+    };
+    invokeMock.mockImplementation(
+      (command: string, args?: Record<string, unknown>) => {
+        switch (command) {
+          case "scan_project":
+            return Promise.resolve({ exists: true, files: [] });
+          case "activate_project":
+            return Promise.resolve(project([secondCommit, firstCommit]));
+          case "project_files":
+            return Promise.resolve(files);
+          case "project_state":
+            return Promise.resolve({
+              head: "v2",
+              capture: {
+                projectId: "project-1",
+                state: "current",
+                message: "Up to date",
+              },
+            });
+          case "comparison_versions":
+            return Promise.resolve(["v1", "v2"]);
+          case "repository_health":
+            return Promise.resolve({ versions: 2, objects: 2 });
+          case "list_commit_files":
+            return Promise.resolve([
+              { path: "painting.clip", size: 24576, hash: "a".repeat(64) },
+            ]);
+          case "get_preview":
+            return Promise.resolve(preview);
+          default:
+            return Promise.reject(
+              new Error(
+                `Unexpected command: ${command} ${JSON.stringify(args)}`,
+              ),
+            );
+        }
+      },
+    );
+    await openExistingProject();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /compare with another version/i }),
+      ).toBeEnabled(),
+    );
+    const compareButton = screen.getByRole("button", {
+      name: /compare with another version/i,
+    });
+    fireEvent.click(compareButton);
+    const selector = await screen.findByRole("combobox", {
+      name: /compare with version/i,
+    });
+    await waitFor(() =>
+      expect(
+        within(selector).getByRole("option", { name: /project created/i }),
+      ).toBeTruthy(),
+    );
+    expect(
+      within(selector).queryByRole("option", {
+        name: /softened the background/i,
+      }),
+    ).toBeNull();
+    fireEvent.change(selector, { target: { value: "v1" } });
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("get_preview", {
+        projectId: "project-1",
+        id: "v1",
+        path: "painting.clip",
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "Overlay" })).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Difference" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(screen.getByText("115%")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Reset zoom and pan" }));
+    expect(screen.getByText("100%")).toBeTruthy();
+  });
+
   it("requires confirmation before in-place replacement and reports the safety snapshot", async () => {
     const outcome = {
       path: "painting.clip",
@@ -236,6 +406,15 @@ describe("ArtLog desktop workflows", () => {
       if (command === "activate_project")
         return Promise.resolve(project([secondCommit, firstCommit]));
       if (command === "project_files") return Promise.resolve(files);
+      if (command === "project_state")
+        return Promise.resolve({
+          head: "v2",
+          capture: {
+            projectId: "project-1",
+            state: "current",
+            message: "Up to date",
+          },
+        });
       if (command === "repository_health")
         return Promise.resolve({ versions: 2, objects: 2 });
       if (command === "list_commit_files")
@@ -289,6 +468,15 @@ describe("ArtLog desktop workflows", () => {
       if (command === "activate_project")
         return Promise.resolve(project([secondCommit, firstCommit]));
       if (command === "project_files") return Promise.resolve(files);
+      if (command === "project_state")
+        return Promise.resolve({
+          head: "v2",
+          capture: {
+            projectId: "project-1",
+            state: "current",
+            message: "Up to date",
+          },
+        });
       if (command === "repository_health")
         return Promise.resolve({ versions: 2, objects: 2 });
       if (command === "list_commit_files")

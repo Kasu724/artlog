@@ -175,6 +175,7 @@ fn run_worker(
     let mut next_poll = Instant::now();
     let mut next_full_reconcile = Instant::now() + FULL_RECONCILE_INTERVAL;
     let mut force_reconcile = true;
+    let mut capture_empty = false;
     let mut stop = false;
     let mut recovering = false;
     let mut last_pending_notice = Instant::now() - Duration::from_secs(2);
@@ -255,6 +256,7 @@ fn run_worker(
                 Ok(paths) if !paths.is_empty() => {
                     recovering = true;
                     pending.clear();
+                    capture_empty = false;
                     emit(
                         &callback,
                         WatchState::Paused,
@@ -287,6 +289,7 @@ fn run_worker(
 
             if !settings.auto_capture {
                 pending.clear();
+                capture_empty = false;
                 emit(
                     &callback,
                     WatchState::Paused,
@@ -304,6 +307,7 @@ fn run_worker(
             }
 
             if force_reconcile {
+                capture_empty = tracked.is_empty();
                 for path in &tracked {
                     known.insert(path.clone(), file_fingerprint(&repo, path));
                     add_pending(&mut pending, path.clone());
@@ -328,7 +332,7 @@ fn run_worker(
         }
         let now = Instant::now();
         let debounce = Duration::from_millis(settings.debounce_ms.clamp(100, 10_000));
-        let mut all_stable = !pending.is_empty();
+        let mut all_stable = capture_empty || !pending.is_empty();
         for (path, candidate) in pending.iter_mut() {
             let current = file_fingerprint(&repo, path);
             if !candidate.has_probe || candidate.fingerprint != current {
@@ -362,6 +366,7 @@ fn run_worker(
                 Ok(paths) if !paths.is_empty() => {
                     recovering = true;
                     pending.clear();
+                    capture_empty = false;
                     emit(
                         &callback,
                         WatchState::Paused,
@@ -390,6 +395,7 @@ fn run_worker(
                         settings = updated;
                         tracked = settings.tracked.clone();
                         pending.clear();
+                        capture_empty = false;
                         force_reconcile = true;
                         continue;
                     }
@@ -463,6 +469,7 @@ fn run_worker(
                 }
             }
             pending.clear();
+            capture_empty = false;
             known.clear();
             for path in &tracked {
                 known.insert(path.clone(), file_fingerprint(&repo, path));
@@ -474,8 +481,10 @@ fn run_worker(
 fn is_transient_io(error: &crate::Error) -> bool {
     match error {
         crate::Error::Io { source, .. } => {
-            source.kind() == io::ErrorKind::PermissionDenied
-                || matches!(source.raw_os_error(), Some(32 | 33))
+            matches!(
+                source.kind(),
+                io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+            ) || (cfg!(windows) && matches!(source.raw_os_error(), Some(32 | 33)))
         }
         _ => false,
     }
