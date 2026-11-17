@@ -40,3 +40,9 @@ export function isClipFile(path: string): boolean {
   const name = fileName(path);
   return name.length > 5 && name.toLowerCase().endsWith(".clip");
 }
+
+export function errorMessage(cause: unknown): string {
+  if (typeof cause === "string") return cause;
+  if (cause instanceof Error) return cause.message;
+  return "ArtLog could not complete that action. Try again, and keep the original file safe.";
+}
