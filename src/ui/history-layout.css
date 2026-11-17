@@ -249,7 +249,7 @@
 }
 
 .danger-button:hover:not(:disabled) {
-  background: #a45e4f;
+  background: #a05b4d;
 }
 
 .danger-button:disabled {

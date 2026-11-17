@@ -375,6 +375,76 @@ export function PreviewComparison({
           )}
         </div>
       )}
+      {comparisonCommit && (
+        <div className="preview-controls-row">
+          {current.result.state === "ready" &&
+            comparison.result.state === "ready" && (
+              <div
+                className="compare-modes"
+                role="group"
+                aria-label="Comparison mode"
+              >
+                <button
+                  aria-pressed={mode === "side"}
+                  onClick={() => setMode("side")}
+                >
+                  Side by side
+                </button>
+                <button
+                  aria-pressed={mode === "overlay"}
+                  disabled={!sameDimensions}
+                  onClick={() => setMode("overlay")}
+                >
+                  Overlay
+                </button>
+                <button
+                  aria-pressed={mode === "difference"}
+                  disabled={!sameDimensions}
+                  onClick={() => setMode("difference")}
+                >
+                  Difference
+                </button>
+              </div>
+            )}
+          <div
+            className="preview-pan-controls"
+            role="group"
+            aria-label="Synchronized zoom and pan controls"
+          >
+            <button
+              aria-label="Zoom out"
+              onClick={() => zoomBy(-0.15)}
+              disabled={zoom <= 1}
+            >
+              −
+            </button>
+            <span>{Math.round(zoom * 100)}%</span>
+            <button
+              aria-label="Zoom in"
+              onClick={() => zoomBy(0.15)}
+              disabled={zoom >= 5}
+            >
+              ＋
+            </button>
+            <button aria-label="Reset zoom and pan" onClick={resetView}>
+              Reset
+            </button>
+          </div>
+        </div>
+      )}
+      {mode === "overlay" && sameDimensions && (
+        <label className="opacity-control">
+          Selected version opacity{" "}
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={opacity}
+            onChange={(event) => setOpacity(Number(event.target.value))}
+          />
+          <span>{opacity}%</span>
+        </label>
+      )}
       {showsCombinedPreview && (
         <div className="compare-version-labels">
           <span title={comparisonCommit?.title}>
@@ -482,76 +552,6 @@ export function PreviewComparison({
             onWheel={wheel}
           />
         </div>
-      )}
-      {comparisonCommit && (
-        <div className="preview-controls-row">
-          {current.result.state === "ready" &&
-            comparison.result.state === "ready" && (
-              <div
-                className="compare-modes"
-                role="group"
-                aria-label="Comparison mode"
-              >
-                <button
-                  aria-pressed={mode === "side"}
-                  onClick={() => setMode("side")}
-                >
-                  Side by side
-                </button>
-                <button
-                  aria-pressed={mode === "overlay"}
-                  disabled={!sameDimensions}
-                  onClick={() => setMode("overlay")}
-                >
-                  Overlay
-                </button>
-                <button
-                  aria-pressed={mode === "difference"}
-                  disabled={!sameDimensions}
-                  onClick={() => setMode("difference")}
-                >
-                  Difference
-                </button>
-              </div>
-            )}
-          <div
-            className="preview-pan-controls"
-            role="group"
-            aria-label="Synchronized zoom and pan controls"
-          >
-            <button
-              aria-label="Zoom out"
-              onClick={() => zoomBy(-0.15)}
-              disabled={zoom <= 1}
-            >
-              −
-            </button>
-            <span>{Math.round(zoom * 100)}%</span>
-            <button
-              aria-label="Zoom in"
-              onClick={() => zoomBy(0.15)}
-              disabled={zoom >= 5}
-            >
-              ＋
-            </button>
-            <button aria-label="Reset zoom and pan" onClick={resetView}>
-              Reset
-            </button>
-          </div>
-        </div>
-      )}
-      {mode === "overlay" && sameDimensions && (
-        <label className="opacity-control">
-          Selected version opacity{" "}
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={opacity}
-            onChange={(event) => setOpacity(Number(event.target.value))}
-          />
-          <span>{opacity}%</span>
-        </label>
       )}
       {attachError && (
         <p className="compare-error" role="alert">
@@ -672,6 +672,14 @@ function PreviewPane({
               ? "No preview saved for this version"
               : "Choose an earlier version"}
           </span>
+          {commit && isClipFile(path) && (
+            <button
+              className="secondary-button attach-preview"
+              onClick={onAttach}
+            >
+              Attach PNG/JPEG export…
+            </button>
+          )}
         </div>
       )}
       {adapterNote && (
@@ -686,18 +694,20 @@ function PreviewPane({
           {adapterNote}
         </span>
       )}
-      {commit && isClipFile(path) && (
-        <button
-          className="secondary-button attach-preview"
-          onClick={onAttach}
-          disabled={loading}
-          title={`Attach a flattened PNG or JPEG export as an approximate reference for ${commit.title}, ${path}`}
-        >
-          {state.state === "ready"
-            ? "Replace attached preview…"
-            : "Attach PNG/JPEG export…"}
-        </button>
-      )}
+      {commit &&
+        !loading &&
+        isClipFile(path) &&
+        state.state !== "unavailable" && (
+          <button
+            className="secondary-button attach-preview"
+            onClick={onAttach}
+            title={`Attach a flattened PNG or JPEG export as an approximate reference for ${commit.title}, ${path}`}
+          >
+            {state.state === "ready"
+              ? "Replace attached preview…"
+              : "Attach PNG/JPEG export…"}
+          </button>
+        )}
     </div>
   );
 }
