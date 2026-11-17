@@ -14,6 +14,7 @@ import type {
   Settings,
   ViewName,
 } from "../types";
+import { Icon } from "./Icon";
 import { createPixelDifference } from "./pixel-difference";
 
 type Setup = { root: string; files: ScanEntry[]; tracked: string[] };
@@ -1284,93 +1285,105 @@ export default function App() {
     setRestoreTarget({ id, file });
   };
 
+  const captureState =
+    capture?.state ?? (project?.settings.autoCapture ? "current" : "paused");
+
   return (
     <main className="app-shell">
-      {project ? (
-        <aside className="project-rail" aria-label="ArtLog navigation">
+      <aside className={project ? "project-rail" : "rail"} aria-label="ArtLog">
+        {project ? (
           <button
             className="brand-mark brand-button"
             aria-label="Close project"
             title="Close project"
+            disabled={busy}
             onClick={closeProject}
           >
-            A<span>.</span>
+            <Icon name="brand" />
+            <span>ArtLog</span>
           </button>
+        ) : (
+          <span className="brand-mark">
+            <Icon name="brand" />
+          </span>
+        )}
+        {project && (
           <nav className="project-nav" aria-label="Project views">
-            <button
-              className={
-                view === "history" ? "nav-button active" : "nav-button"
-              }
-              aria-current={view === "history" ? "page" : undefined}
-              onClick={() => setView("history")}
-              title="History"
-            >
-              <span aria-hidden="true">◷</span>
-              <span>History</span>
-            </button>
-            <button
-              className={view === "files" ? "nav-button active" : "nav-button"}
-              aria-current={view === "files" ? "page" : undefined}
-              onClick={() => setView("files")}
-              title="Tracked files"
-            >
-              <span aria-hidden="true">▤</span>
-              <span>Files</span>
-            </button>
-            <button
-              className={
-                view === "settings" ? "nav-button active" : "nav-button"
-              }
-              aria-current={view === "settings" ? "page" : undefined}
-              onClick={() => setView("settings")}
-              title="Settings"
-            >
-              <span aria-hidden="true">⚙</span>
-              <span>Settings</span>
-            </button>
+            {(
+              [
+                ["history", "History", "history"],
+                ["files", "Files", "folder"],
+                ["settings", "Settings", "settings"],
+              ] as const
+            ).map(([destination, label, icon]) => (
+              <button
+                key={destination}
+                className={
+                  view === destination ? "nav-button active" : "nav-button"
+                }
+                aria-current={view === destination ? "page" : undefined}
+                onClick={() => setView(destination)}
+              >
+                <Icon name={icon} />
+                <span>{label}</span>
+              </button>
+            ))}
           </nav>
-          <div className="rail-bottom">
-            <span className="local-dot" /> LOCAL ONLY
-          </div>
-        </aside>
-      ) : (
-        <aside className="rail" aria-label="ArtLog navigation">
-          <div className="brand-mark" aria-label="ArtLog">
-            A<span>.</span>
-          </div>
-          <div className="rail-bottom">
-            <span className="local-dot" /> Local storage
-          </div>
-        </aside>
-      )}
+        )}
+      </aside>
       <section className="workspace">
-        <header className="topbar">
-          <div className="wordmark">
-            ARTLOG <span>STUDIO</span>
-          </div>
-          <div className="topbar-right">
-            {project && (
+        {project && !setup && (
+          <header className="topbar">
+            <h1 className="project-title" aria-label={project.name}>
+              <button
+                className="project-picker"
+                aria-label={`Open another project. Current project: ${project.name}`}
+                title={project.root}
+                onClick={chooseProject}
+                disabled={busy}
+              >
+                <Icon name="folder" />
+                <span>{project.name}</span>
+                <Icon name="chevron" />
+              </button>
+            </h1>
+            <div className="topbar-right">
               <span
-                className={`capture-pill state-${(capture ?? { state: project.settings.autoCapture ? "current" : "paused" }).state}`}
+                className={`capture-pill state-${captureState}`}
+                role="status"
                 title={capture?.message || undefined}
               >
-                <span className="capture-dot" />
-                {statusName(
-                  (
-                    capture ?? {
-                      state: project.settings.autoCapture
-                        ? "current"
-                        : "paused",
+                <span className="capture-indicator">
+                  <Icon
+                    name={
+                      captureState === "current"
+                        ? "check"
+                        : captureState === "paused"
+                          ? "pause"
+                          : captureState === "error"
+                            ? "warning"
+                            : "history"
                     }
-                  ).state,
-                )}
+                  />
+                </span>
+                {statusName(captureState)}
               </span>
-            )}
-            <div className="privacy">
-              <span className="privacy-dot" /> YOUR FILES STAY ON THIS DEVICE
+              {view === "history" && (
+                <button
+                  className="primary-button compact-button"
+                  aria-label="Create checkpoint"
+                  disabled={busy}
+                  onClick={() => {
+                    setCheckpointOpen(true);
+                    setError("");
+                  }}
+                >
+                  New checkpoint
+                </button>
+              )}
             </div>
-          </div>
-        </header>
+          </header>
+        )}
 
         {setup ? (
           <TrackSetup
@@ -1429,7 +1442,7 @@ export default function App() {
                   {error}
                 </p>
               )}
-              <p className="compatibility">Clip Studio Paint · .clip files</p>
+              <p className="compatibility">Your files stay on this device</p>
             </div>
             <div
               className="art-card"
@@ -1468,41 +1481,6 @@ export default function App() {
           </div>
         ) : (
           <div className="project-view-shell">
-            <div className="project-heading-row">
-              <div className="project-heading">
-                <div className="eyebrow">YOUR PROJECT</div>
-                <h1>{project.name}</h1>
-                <p className="project-path" title={project.root}>
-                  {project.root}
-                </p>
-              </div>
-              <div className="project-actions">
-                {view === "history" && (
-                  <button
-                    className="primary-button compact-button"
-                    aria-label={
-                      checkpointOpen ? "Cancel checkpoint" : "Create checkpoint"
-                    }
-                    onClick={() => {
-                      setCheckpointOpen((openState) => !openState);
-                      setError("");
-                    }}
-                  >
-                    <span>
-                      {checkpointOpen ? "Cancel checkpoint" : "＋ Checkpoint"}
-                    </span>
-                  </button>
-                )}
-                <button
-                  className="more-button"
-                  aria-label="Open another project"
-                  title="Open another project"
-                  onClick={chooseProject}
-                >
-                  ↗
-                </button>
-              </div>
-            </div>
             {notice && (
               <div className="notice-banner" role="status">
                 <span>✓</span>
