@@ -67,7 +67,9 @@ fn corrupt_chunk_is_rejected_before_reconstruction_succeeds() {
 fn scans_only_clip_documents_and_captures_a_long_unicode_path() {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path().canonicalize().unwrap();
-    let prefix = "画".repeat(78);
+    // Exercise paths over 260 characters on Windows while leaving room for
+    // the temporary directory within the macOS pathname byte limit.
+    let prefix = format!("{}{}", "a".repeat(64), "画".repeat(4));
     let deep = ["one", "two", "three", "four"]
         .map(|component| format!("{component}-{prefix}"))
         .join("/");
