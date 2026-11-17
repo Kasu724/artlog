@@ -93,23 +93,6 @@
   font: 500 clamp(34px, 4.5vw, 48px)/1.15 var(--heading-font);
   letter-spacing: -1.1px;
 }
-.project-path {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  margin: 0;
-  color: var(--muted);
-  font: 12px/1.5 var(--mono-font);
-}
-.project-path .icon {
-  color: var(--text);
-}
-.project-path span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .setup-card {
   margin-top: 29px;
   padding: 20px 20px 0;

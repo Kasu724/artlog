@@ -141,7 +141,7 @@ describe("ArtLog desktop workflows", () => {
 
   it("opens an existing project and shows its main timeline", async () => {
     await openExistingProject();
-    expect(screen.getByRole("heading", { name: "Timeline" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "History" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: /softened the background/i }),
     ).toBeTruthy();
@@ -181,7 +181,7 @@ describe("ArtLog desktop workflows", () => {
     );
     await screen.findByRole("heading", { name: /files to track/i });
     fireEvent.click(screen.getByRole("button", { name: /create project/i }));
-    await screen.findByRole("heading", { name: "Timeline" });
+    await screen.findByRole("heading", { name: "History" });
     expect(invokeMock).toHaveBeenCalledWith("activate_project", {
       root: "C:\\art\\moss study",
       tracked: ["painting.clip"],
@@ -219,7 +219,7 @@ describe("ArtLog desktop workflows", () => {
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
     await openExistingProject();
-    fireEvent.click(screen.getByRole("button", { name: "Create checkpoint" }));
+    fireEvent.click(screen.getByRole("button", { name: "New checkpoint" }));
     fireEvent.change(screen.getByLabelText(/checkpoint name/i), {
       target: { value: "Line art approved" },
     });
@@ -527,7 +527,9 @@ describe("ArtLog desktop workflows", () => {
     });
     saveMock.mockResolvedValue("C:\\art\\old-work-copy.psd");
     await openExistingProject();
-    expect(await screen.findByText("ARCHIVED FILE")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { name: "Archived file" }),
+    ).toBeTruthy();
     expect(screen.getByText("old-work.psd")).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: /replace working file/i }),

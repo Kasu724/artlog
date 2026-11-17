@@ -15,6 +15,7 @@ import type {
   ViewName,
 } from "../types";
 import { Icon } from "./Icon";
+import { HistoryTimeline, VersionDetail } from "./History";
 import { createPixelDifference } from "./pixel-difference";
 import { TrackSetup, Welcome, type Setup } from "./ProjectEntry";
 import { fileName, formatBytes, formatDate, isClipFile } from "./format";
@@ -23,18 +24,6 @@ function errorMessage(cause: unknown): string {
   if (typeof cause === "string") return cause;
   if (cause instanceof Error) return cause.message;
   return "ArtLog could not complete that action. Try again, and keep the original file safe.";
-}
-
-function kindName(kind: CommitSummary["kind"]): string {
-  return (
-    {
-      baseline: "First snapshot",
-      auto: "Automatic save",
-      checkpoint: "Checkpoint",
-      safety: "Safety snapshot",
-      restore: "Restored version",
-    } as const
-  )[kind];
 }
 
 function statusName(status: CaptureStatus["state"]): string {
@@ -786,6 +775,7 @@ export default function App() {
     null,
   );
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const checkpointDialogRef = useRef<HTMLDialogElement>(null);
   const projectSnapshotRef = useRef<ProjectView | null>(null);
   projectSnapshotRef.current = project;
 
@@ -990,9 +980,21 @@ export default function App() {
     if (!dialogRef.current?.open) dialogRef.current?.showModal();
   }, [restoreTarget]);
 
+  useEffect(() => {
+    const dialog = checkpointDialogRef.current;
+    if (!dialog) return;
+    if (checkpointOpen && !dialog.open) dialog.showModal();
+    if (!checkpointOpen && dialog.open) dialog.close();
+  }, [checkpointOpen]);
+
+  function closeCheckpoint() {
+    setCheckpointOpen(false);
+    setError("");
+  }
+
   async function makeCheckpoint(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!project) return;
+    if (!project || busy || !checkpointTitle.trim()) return;
     setBusy(true);
     setError("");
     try {
@@ -1081,7 +1083,7 @@ export default function App() {
   }
 
   async function restoreInPlace() {
-    if (!project || !restoreTarget) return;
+    if (!project || !restoreTarget || !restoreConfirmed || busy) return;
     const target = restoreTarget;
     setBusy(true);
     setError("");
@@ -1141,6 +1143,10 @@ export default function App() {
 
   const captureState =
     capture?.state ?? (project?.settings.autoCapture ? "current" : "paused");
+
+  const recoverySafetyId = project?.commits.find(
+    (commit) => commit.kind === "safety",
+  )?.id;
 
   return (
     <main className="app-shell">
@@ -1225,7 +1231,6 @@ export default function App() {
               {view === "history" && (
                 <button
                   className="primary-button compact-button"
-                  aria-label="Create checkpoint"
                   disabled={busy}
                   onClick={() => {
                     setCheckpointOpen(true);
@@ -1304,104 +1309,57 @@ export default function App() {
                 </button>
               </div>
             )}
-            {error && (
+            {error && !checkpointOpen && (
               <div className="error-message project-error" role="alert">
                 {error}
               </div>
             )}
-            {checkpointOpen && (
-              <form
-                className="checkpoint-form"
-                onSubmit={(event) => void makeCheckpoint(event)}
+            {project.recoveryPaths.length > 0 && (
+              <section
+                className="recovery-panel"
+                aria-labelledby="recovery-title"
               >
-                <div className="checkpoint-heading">
-                  <div>
-                    <div className="eyebrow">SAVE A MILESTONE</div>
-                    <h2>Named checkpoint</h2>
-                  </div>
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => setCheckpointOpen(false)}
-                  >
-                    Close
-                  </button>
+                <Icon name="warning" />
+                <div>
+                  <h2 id="recovery-title">Recovery files need attention</h2>
+                  <p>
+                    Keep these files until you verify your work. See the
+                    recovery record for the temporary folder and safety
+                    checkpoint.
+                  </p>
+                  {project.recoveryPaths.map((path) => (
+                    <code className="recovery-path" key={path}>
+                      {joinPath(
+                        project.root,
+                        ".artlog",
+                        "staging",
+                        path,
+                        "recovery.json",
+                      )}
+                    </code>
+                  ))}
                 </div>
-                <label>
-                  Checkpoint name
-                  <input
-                    autoFocus
-                    maxLength={100}
-                    value={checkpointTitle}
-                    onChange={(event) => setCheckpointTitle(event.target.value)}
-                    placeholder="e.g. Approved line art"
-                    required
-                  />
-                </label>
-                <label>
-                  Note <span className="optional-label">OPTIONAL</span>
-                  <textarea
-                    maxLength={1000}
-                    value={checkpointNote}
-                    onChange={(event) => setCheckpointNote(event.target.value)}
-                    placeholder="What changed or what should you remember?"
-                    rows={2}
-                  />
-                </label>
-                <div className="form-actions">
-                  <span>{checkpointTitle.length}/100 characters</span>
+                {recoverySafetyId && (
                   <button
-                    className="primary-button compact-button"
-                    disabled={busy || !checkpointTitle.trim()}
+                    className="primary-button"
+                    onClick={() => {
+                      setView("history");
+                      setSelectedId(recoverySafetyId);
+                    }}
                   >
-                    {busy ? "Saving…" : "Save checkpoint"}
+                    View safety checkpoint
                   </button>
-                </div>
-              </form>
+                )}
+              </section>
             )}
 
             {view === "history" && (
               <div className="history-layout">
-                <section
-                  className="timeline-panel"
-                  aria-label="Version timeline"
-                >
-                  <div className="section-heading timeline-heading">
-                    <div>
-                      <div className="eyebrow">MAIN HISTORY</div>
-                      <h2>Timeline</h2>
-                    </div>
-                    <span className="version-count">
-                      {project.commits.length}{" "}
-                      {project.commits.length === 1 ? "VERSION" : "VERSIONS"}
-                    </span>
-                  </div>
-                  <div className="timeline-list">
-                    {project.commits.length === 0 ? (
-                      <div className="timeline-empty">
-                        <div className="empty-icon">◷</div>
-                        <h3>No snapshots yet</h3>
-                        <p>
-                          Save a named checkpoint to start your project history.
-                        </p>
-                      </div>
-                    ) : (
-                      project.commits.map((commit, index) => (
-                        <TimelineEntry
-                          key={commit.id}
-                          commit={commit}
-                          selected={commit.id === selectedCommit?.id}
-                          latest={index === 0}
-                          onSelect={() => setSelectedId(commit.id)}
-                        />
-                      ))
-                    )}
-                  </div>
-                  <div className="timeline-foot">
-                    <span className="branch-indicator" /> main <span>·</span>{" "}
-                    {formatBytes(project.size)} stored
-                  </div>
-                </section>
+                <HistoryTimeline
+                  commits={project.commits}
+                  selectedId={selectedCommit?.id ?? ""}
+                  onSelect={setSelectedId}
+                />
                 <section
                   className="version-panel"
                   aria-label="Selected version details"
@@ -1437,11 +1395,11 @@ export default function App() {
                         />
                       ) : selectedPath ? (
                         <section
-                          className="compare-panel"
+                          className="archived-file"
                           aria-label="Archived file"
                         >
-                          <div className="eyebrow">ARCHIVED FILE</div>
-                          <p className="section-description">
+                          <h3>Archived file</h3>
+                          <p>
                             Use Restore as a copy to recover this file from an
                             earlier ArtLog project.
                           </p>
@@ -1450,13 +1408,14 @@ export default function App() {
                     </>
                   ) : (
                     <div className="detail-empty">
-                      <span className="empty-icon">◷</span>
-                      <h2>History starts here</h2>
-                      <p>
-                        Save a named checkpoint to create the first version.
-                      </p>
+                      <Icon name="history" />
+                      <p>Saved versions appear here.</p>
                     </div>
                   )}
+                  <p className="project-path history-path" title={project.root}>
+                    <Icon name="folder" />
+                    <span>{project.root}</span>
+                  </p>
                 </section>
               </div>
             )}
@@ -1484,66 +1443,87 @@ export default function App() {
                 onCheckHealth={() => void checkRepositoryHealth(project.id)}
               />
             )}
-
-            {project.recoveryPaths.length > 0 && (
-              <section
-                className="recovery-panel"
-                aria-labelledby="recovery-title"
-              >
-                <div className="recovery-mark">!</div>
-                <div>
-                  <h3 id="recovery-title">Recovery files need attention</h3>
-                  <p>
-                    Keep these files. Open the safety checkpoint in this
-                    project’s history, or read{" "}
-                    <code>.artlog/staging/&lt;folder&gt;/recovery.json</code>{" "}
-                    for the sibling recovery folder path. Do not remove these
-                    files until you have recovered the work.
-                  </p>
-                  {project.recoveryPaths.map((path) => (
-                    <code className="recovery-path" key={path}>
-                      {joinPath(project.root, ".artlog", "staging", path)}
-                    </code>
-                  ))}
-                  {project.commits.find(
-                    (commit) => commit.kind === "safety",
-                  ) && (
-                    <button
-                      className="text-button recovery-link"
-                      onClick={() => {
-                        setView("history");
-                        setSelectedId(
-                          project.commits.find(
-                            (commit) => commit.kind === "safety",
-                          )?.id ?? "",
-                        );
-                      }}
-                    >
-                      View safety checkpoint →
-                    </button>
-                  )}
-                </div>
-              </section>
-            )}
           </div>
         )}
       </section>
 
       <dialog
-        ref={dialogRef}
-        className="restore-dialog"
+        ref={checkpointDialogRef}
+        className="app-dialog"
+        aria-labelledby="checkpoint-title"
         onCancel={(event) => {
           event.preventDefault();
+          if (!busy) closeCheckpoint();
+        }}
+      >
+        {checkpointOpen && (
+          <form
+            className="checkpoint-form"
+            onSubmit={(event) => void makeCheckpoint(event)}
+          >
+            <h2 id="checkpoint-title">New checkpoint</h2>
+            <label>
+              Checkpoint name
+              <input
+                autoFocus
+                maxLength={100}
+                value={checkpointTitle}
+                onChange={(event) => setCheckpointTitle(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Note <span className="optional-label">(optional)</span>
+              <textarea
+                maxLength={1000}
+                value={checkpointNote}
+                onChange={(event) => setCheckpointNote(event.target.value)}
+                rows={3}
+              />
+            </label>
+            {error && (
+              <p className="error-message" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={closeCheckpoint}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={busy || !checkpointTitle.trim()}
+              >
+                {busy ? "Saving…" : "Save checkpoint"}
+              </button>
+            </div>
+          </form>
+        )}
+      </dialog>
+
+      <dialog
+        ref={dialogRef}
+        className="app-dialog restore-dialog"
+        aria-labelledby="restore-title"
+        aria-describedby="restore-warning restore-safety"
+        onCancel={(event) => {
+          event.preventDefault();
+          if (busy) return;
           setRestoreTarget(null);
           setRestoreConfirmed(false);
         }}
       >
         {restoreTarget && (
           <>
-            <div className="dialog-kicker">REPLACE WORKING FILE</div>
-            <div className="dialog-warning">!</div>
-            <h2>Restore {fileName(restoreTarget.file.path)} in place?</h2>
-            <p>
+            <h2 id="restore-title">
+              Restore {fileName(restoreTarget.file.path)} in place?
+            </h2>
+            <p id="restore-warning">
               This replaces the current{" "}
               <strong title={restoreTarget.file.path}>
                 {restoreTarget.file.path}
@@ -1551,14 +1531,15 @@ export default function App() {
               with the selected historical version. Close it in Clip Studio
               Paint first so the editor does not save over the restored file.
             </p>
-            <p>
-              ArtLog will save a safety snapshot of the current work before it
-              replaces the file.
+            <p id="restore-safety">
+              ArtLog saves a safety snapshot of the current work before
+              replacement.
             </p>
             <label className="confirm-check">
               <input
                 type="checkbox"
                 checked={restoreConfirmed}
+                disabled={busy}
                 onChange={(event) => setRestoreConfirmed(event.target.checked)}
               />
               <span>
@@ -1569,6 +1550,8 @@ export default function App() {
             <div className="dialog-actions">
               <button
                 className="secondary-button"
+                autoFocus
+                disabled={busy}
                 onClick={() => {
                   setRestoreTarget(null);
                   setRestoreConfirmed(false);
@@ -1588,166 +1571,6 @@ export default function App() {
         )}
       </dialog>
     </main>
-  );
-}
-
-function TimelineEntry({
-  commit,
-  selected,
-  latest,
-  onSelect,
-}: {
-  commit: CommitSummary;
-  selected: boolean;
-  latest: boolean;
-  onSelect: () => void;
-}) {
-  const date = formatDate(commit.timestamp);
-  return (
-    <button
-      className={`timeline-entry ${selected ? "selected" : ""}`}
-      aria-pressed={selected}
-      onClick={onSelect}
-    >
-      <span
-        className={`timeline-node kind-${commit.kind} ${latest ? "latest" : ""}`}
-      >
-        {commit.kind === "safety"
-          ? "!"
-          : commit.kind === "checkpoint"
-            ? "◆"
-            : ""}
-      </span>
-      <span className="timeline-copy">
-        <span className="timeline-title">{commit.title}</span>
-        <span className="timeline-meta">
-          <span className={`kind-tag kind-tag-${commit.kind}`}>
-            {kindName(commit.kind)}
-          </span>
-          <time dateTime={commit.timestamp} title={date.full}>
-            {date.day} · {date.time}
-          </time>
-        </span>
-        <span className="timeline-note">
-          {commit.note ||
-            `${commit.fileCount} tracked file${commit.fileCount === 1 ? "" : "s"}`}
-        </span>
-      </span>
-      {selected && (
-        <span className="timeline-chevron" aria-hidden="true">
-          ›
-        </span>
-      )}
-    </button>
-  );
-}
-
-function VersionDetail({
-  commit,
-  files,
-  selectedPath,
-  busy,
-  onSelectPath,
-  onRestoreCopy,
-  onRestoreInPlace,
-}: {
-  commit: CommitSummary;
-  files: FileVersion[];
-  selectedPath: string;
-  busy: boolean;
-  onSelectPath: (path: string) => void;
-  onRestoreCopy: () => void;
-  onRestoreInPlace: () => void;
-}) {
-  const date = formatDate(commit.timestamp);
-  return (
-    <section className="version-card">
-      <div className="section-heading detail-heading">
-        <div>
-          <div className="eyebrow">VERSION DETAILS</div>
-          <h2>{commit.title}</h2>
-        </div>
-        <span className={`kind-badge kind-tag-${commit.kind}`}>
-          {kindName(commit.kind)}
-        </span>
-      </div>
-      <time
-        className="detail-date"
-        dateTime={commit.timestamp}
-        title={date.full}
-      >
-        {date.day} · {date.time}
-      </time>
-      {commit.note && <p className="detail-note">{commit.note}</p>}
-      <div className="detail-divider" />
-      <div className="files-title-row">
-        <div className="eyebrow">FILES IN THIS VERSION</div>
-        <span>
-          {files.length} FILE{files.length === 1 ? "" : "S"}
-        </span>
-      </div>
-      {files.length === 0 ? (
-        <div className="empty-inline">No tracked files in this snapshot.</div>
-      ) : (
-        <div className="version-files">
-          {files.map((file) => (
-            <button
-              className={
-                selectedPath === file.path
-                  ? "version-file selected"
-                  : "version-file"
-              }
-              key={file.path}
-              onClick={() => onSelectPath(file.path)}
-              title={file.path}
-            >
-              <span
-                className={`file-glyph ${isClipFile(file.path) ? "artwork" : ""}`}
-              >
-                {isClipFile(file.path) ? "CLIP" : "FILE"}
-              </span>
-              <span className="version-file-name">{file.path}</span>
-              <span className="version-file-size">
-                {formatBytes(file.size)}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-      {selectedPath && (
-        <div className="selected-file-hash">
-          <span>VERIFIED CONTENT</span>
-          <code title={files.find((file) => file.path === selectedPath)?.hash}>
-            {files
-              .find((file) => file.path === selectedPath)
-              ?.hash.slice(0, 16) ?? ""}
-            …
-          </code>
-        </div>
-      )}
-      <div className="restore-actions">
-        <button
-          className="primary-button restore-copy"
-          disabled={busy || !selectedPath}
-          onClick={onRestoreCopy}
-        >
-          <span>Restore as a copy</span>
-          <span className="arrow">↗</span>
-        </button>
-        {isClipFile(selectedPath) && (
-          <button
-            className="text-button restore-place"
-            disabled={busy || !selectedPath}
-            onClick={onRestoreInPlace}
-          >
-            Replace working file…
-          </button>
-        )}
-      </div>
-      <p className="restore-safe-note">
-        A separate copy is the safest way to bring back an earlier version.
-      </p>
-    </section>
   );
 }
 
