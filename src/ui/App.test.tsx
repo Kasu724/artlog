@@ -136,7 +136,7 @@ describe("ArtLog desktop workflows", () => {
     expect(
       screen.getByRole("button", { name: /open a project folder/i }),
     ).toBeTruthy();
-    expect(screen.getByText(/your files stay on this device/i)).toBeTruthy();
+    expect(screen.getByText(/stored on this device/i)).toBeTruthy();
   });
 
   it("opens an existing project and shows its main timeline", async () => {
@@ -179,10 +179,8 @@ describe("ArtLog desktop workflows", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /open a project folder/i }),
     );
-    await screen.findByRole("heading", { name: /choose what artlog tracks/i });
-    fireEvent.click(
-      screen.getByRole("button", { name: /create artlog project/i }),
-    );
+    await screen.findByRole("heading", { name: /files to track/i });
+    fireEvent.click(screen.getByRole("button", { name: /create project/i }));
     await screen.findByRole("heading", { name: "Timeline" });
     expect(invokeMock).toHaveBeenCalledWith("activate_project", {
       root: "C:\\art\\moss study",

@@ -16,47 +16,13 @@ import type {
 } from "../types";
 import { Icon } from "./Icon";
 import { createPixelDifference } from "./pixel-difference";
-
-type Setup = { root: string; files: ScanEntry[]; tracked: string[] };
+import { TrackSetup, Welcome, type Setup } from "./ProjectEntry";
+import { fileName, formatBytes, formatDate, isClipFile } from "./format";
 
 function errorMessage(cause: unknown): string {
   if (typeof cause === "string") return cause;
   if (cause instanceof Error) return cause.message;
   return "ArtLog could not complete that action. Try again, and keep the original file safe.";
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let size = value / 1024;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size < 10 ? size.toFixed(1) : Math.round(size)} ${units[unit]}`;
-}
-
-function formatDate(value: string): {
-  day: string;
-  time: string;
-  full: string;
-} {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return { day: value, time: "", full: value };
-  return {
-    day: new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }).format(date),
-    time: new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(date),
-    full: date.toLocaleString(),
-  };
 }
 
 function kindName(kind: CommitSummary["kind"]): string {
@@ -81,15 +47,6 @@ function statusName(status: CaptureStatus["state"]): string {
       error: "Capture needs attention",
     } as const
   )[status];
-}
-
-function fileName(path: string): string {
-  return path.split(/[\\/]/).at(-1) ?? path;
-}
-
-function isClipFile(path: string): boolean {
-  const name = fileName(path);
-  return name.length > 5 && name.toLowerCase().endsWith(".clip");
 }
 
 function joinPath(root: string, ...parts: string[]): string {
@@ -799,109 +756,6 @@ function PreviewPane({
   );
 }
 
-function TrackSetup({
-  setup,
-  busy,
-  error,
-  onToggle,
-  onSelectAll,
-  onCancel,
-  onActivate,
-}: {
-  setup: Setup;
-  busy: boolean;
-  error: string;
-  onToggle: (path: string) => void;
-  onSelectAll: (paths: string[]) => void;
-  onCancel: () => void;
-  onActivate: () => void;
-}) {
-  return (
-    <div className="setup-view">
-      <button className="text-button back-button" onClick={onCancel}>
-        ← All projects
-      </button>
-      <div className="eyebrow">
-        <span className="eyebrow-line" /> SET UP PROJECT
-      </div>
-      <h1>{fileName(setup.root)}</h1>
-      <p className="project-path">{setup.root}</p>
-      <div className="setup-card">
-        <div className="section-heading">
-          <div>
-            <h2>Choose what ArtLog tracks</h2>
-            <p>ArtLog tracks Clip Studio Paint .clip files in this folder.</p>
-          </div>
-          <button
-            className="text-button"
-            onClick={() =>
-              onSelectAll(
-                setup.tracked.length === setup.files.length
-                  ? []
-                  : setup.files.map((file) => file.path),
-              )
-            }
-          >
-            {setup.tracked.length === setup.files.length
-              ? "Clear all"
-              : "Select all"}
-          </button>
-        </div>
-        <div className="scan-list">
-          {setup.files.length === 0 && (
-            <div className="empty-inline">
-              No Clip Studio Paint files found. You can start a project here and
-              add .clip files later.
-            </div>
-          )}
-          {setup.files.map((file) => (
-            <label className="scan-row" key={file.path}>
-              <input
-                aria-label={file.path}
-                type="checkbox"
-                checked={setup.tracked.includes(file.path)}
-                onChange={() => onToggle(file.path)}
-              />
-              <span className="file-glyph artwork">
-                {fileName(file.path)
-                  .split(".")
-                  .at(-1)
-                  ?.slice(0, 4)
-                  .toUpperCase() ?? "FILE"}
-              </span>
-              <span className="scan-name" title={file.path}>
-                {file.path}
-              </span>
-              <span className="scan-badge">CLIP</span>
-              <span className="scan-size">{formatBytes(file.size)}</span>
-            </label>
-          ))}
-        </div>
-        <div className="setup-foot">
-          <span>{setup.tracked.length} selected</span>
-          <button
-            className="primary-button"
-            disabled={busy}
-            onClick={onActivate}
-          >
-            <span>{busy ? "Creating project…" : "Create ArtLog project"}</span>
-            <span className="arrow">↗</span>
-          </button>
-        </div>
-      </div>
-      {error && (
-        <p className="error-message" role="alert">
-          {error}
-        </p>
-      )}
-      <p className="setup-privacy">
-        ArtLog creates a portable <code>.artlog</code> folder here. Your artwork
-        is never uploaded.
-      </p>
-    </div>
-  );
-}
-
 export default function App() {
   const [project, setProject] = useState<ProjectView | null>(null);
   const [view, setView] = useState<ViewName>("history");
@@ -1413,72 +1267,7 @@ export default function App() {
             onActivate={() => void activate(setup.root, setup.tracked)}
           />
         ) : !project ? (
-          <div className="welcome-layout">
-            <div className="welcome-copy">
-              <div className="eyebrow">
-                <span className="eyebrow-line" /> A SAFER SPACE TO EXPERIMENT
-              </div>
-              <h1>
-                Your art,
-                <br />
-                with a <em>way back.</em>
-              </h1>
-              <p className="lede">
-                A quiet history for the files you create. Keep painting in your
-                favorite app. ArtLog keeps every saved version close at hand.
-              </p>
-              <button
-                className="primary-button"
-                onClick={chooseProject}
-                disabled={busy}
-              >
-                <span>
-                  {busy ? "Opening folder…" : "Open a project folder"}
-                </span>
-                <span className="arrow">↗</span>
-              </button>
-              {error && (
-                <p className="error-message" role="alert">
-                  {error}
-                </p>
-              )}
-              <p className="compatibility">Your files stay on this device</p>
-            </div>
-            <div
-              className="art-card"
-              aria-label="Artwork version history illustration"
-            >
-              <div className="art-grid" />
-              <div className="art-label">
-                <span className="art-dot" /> LIVE CANVAS{" "}
-                <span className="art-count">03 VERSIONS</span>
-              </div>
-              <div className="canvas-orbit orbit-one" />
-              <div className="canvas-orbit orbit-two" />
-              <div className="sun-shape" />
-              <div className="mountain mountain-back" />
-              <div className="mountain mountain-front" />
-              <div className="canvas-stamp">
-                No pressure.
-                <br />
-                <i>It’s all here.</i>
-              </div>
-              <div className="history-stack">
-                <span className="history-thumb thumb-a">01</span>
-                <span className="history-thumb thumb-b">02</span>
-                <span className="history-thumb thumb-c">03</span>
-                <span className="history-caption">
-                  A little room
-                  <br />
-                  to try things.
-                </span>
-              </div>
-            </div>
-            <div className="welcome-foot">
-              <span>ONE PROJECT · ONE HISTORY</span>
-              <span>MADE FOR THE WORK IN PROGRESS</span>
-            </div>
-          </div>
+          <Welcome busy={busy} error={error} onChooseProject={chooseProject} />
         ) : (
           <div className="project-view-shell">
             {notice && (
