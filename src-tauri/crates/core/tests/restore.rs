@@ -33,14 +33,14 @@ fn restores_exact_bytes_without_clobbering_and_keeps_a_safety_version() {
 #[test]
 fn missing_historical_chunk_does_not_touch_working_file() {
     let folder = tempfile::tempdir().unwrap();
-    let art = folder.path().join("Painting.psd");
+    let art = folder.path().join("Painting.clip");
     fs::write(&art, b"original").unwrap();
-    let repo = Repository::init(folder.path(), vec!["Painting.psd".into()]).unwrap();
+    let repo = Repository::init(folder.path(), vec!["Painting.clip".into()]).unwrap();
     let old = repo.history().unwrap().remove(0);
     let hash = &old.files[0].chunks[0];
     fs::remove_file(repo.metadata().join("objects").join(&hash[..2]).join(hash)).unwrap();
     fs::write(&art, b"keep my latest painting").unwrap();
-    assert!(restore::in_place(&repo, &old.id, "Painting.psd", "Painting.psd").is_err());
+    assert!(restore::in_place(&repo, &old.id, "Painting.clip", "Painting.clip").is_err());
     assert_eq!(fs::read(&art).unwrap(), b"keep my latest painting");
     assert_eq!(repo.history().unwrap().len(), 1);
 }

@@ -41,7 +41,6 @@ export type ProjectView = {
 
 export type ScanEntry = {
   path: string;
-  artwork: boolean;
   size: number;
 };
 
@@ -65,8 +64,8 @@ export type Preview = {
   dataUrl: string;
   width: number;
   height: number;
-  adapter: "psd" | "export";
-  adapterVersion: string;
+  adapter: "export";
+  adapterVersion: number;
 };
 
 export type ViewName = "history" | "files" | "settings";

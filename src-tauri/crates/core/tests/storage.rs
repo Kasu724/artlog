@@ -10,8 +10,8 @@ fn init_capture_reopen_deduplicate_and_reconstruct_exact_bytes() {
     let root = temp.path();
     let original = b"first layered artwork\0bytes";
     fs::write(root.join("drawing.clip"), original).unwrap();
-    fs::write(root.join("poster.psd"), b"initial composite").unwrap();
-    let repo = Repository::init(root, vec!["drawing.clip".into(), "poster.psd".into()]).unwrap();
+    fs::write(root.join("poster.clip"), b"initial composite").unwrap();
+    let repo = Repository::init(root, vec!["drawing.clip".into(), "poster.clip".into()]).unwrap();
     let baseline = repo.head().unwrap().unwrap();
     let baseline_commit = repo.commit(&baseline).unwrap();
     assert_eq!(baseline_commit.kind, Kind::Baseline);
@@ -64,25 +64,40 @@ fn corrupt_chunk_is_rejected_before_reconstruction_succeeds() {
 }
 
 #[test]
-fn finds_explicit_companions_and_captures_a_long_unicode_path() {
+fn scans_only_clip_documents_and_captures_a_long_unicode_path() {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path().canonicalize().unwrap();
-    let prefix = "画".repeat(78);
+    // Exercise paths over 260 characters on Windows while leaving room for
+    // the temporary directory within the macOS pathname byte limit.
+    let prefix = format!("{}{}", "a".repeat(64), "画".repeat(4));
     let deep = ["one", "two", "three", "four"]
         .map(|component| format!("{component}-{prefix}"))
         .join("/");
-    let art = format!("{deep}/夜.psd");
+    let art = format!("{deep}/夜.CLIP");
     fs::create_dir_all(root.join(&deep)).unwrap();
     fs::write(root.join(&art), b"layered art").unwrap();
     fs::write(root.join("palette.txt"), b"palette companion").unwrap();
+    fs::write(root.join("outside.psd"), b"other artwork").unwrap();
     fs::write(root.join("temp.TMP"), b"editor scratch").unwrap();
     let found = Repository::scan(&root).unwrap();
-    assert!(found.iter().any(|file| file.path == art && file.artwork));
-    assert!(found
-        .iter()
-        .any(|file| file.path == "palette.txt" && !file.artwork));
-    assert!(!found.iter().any(|file| file.path == "temp.TMP"));
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].path, art);
+    assert!(matches!(
+        Repository::init(&root, vec!["outside.psd".into()]),
+        Err(Error::Invalid(_))
+    ));
+    assert!(!root.join(".artlog").exists());
     let repo = Repository::init(&root, vec![art.clone()]).unwrap();
+    let mut unsupported = repo.settings().unwrap();
+    unsupported.tracked.push("palette.txt".into());
+    assert!(matches!(
+        repo.set_settings(unsupported),
+        Err(Error::Invalid(_))
+    ));
+    assert_eq!(
+        repo.settings().unwrap().tracked.as_slice(),
+        std::slice::from_ref(&art)
+    );
     let id = repo.head().unwrap().unwrap();
     assert!(repo.entry(&id, "palette.txt").is_err());
     let mut output = Vec::new();
@@ -107,16 +122,16 @@ fn interrupted_restore_write_reports_disk_full_and_leaves_history_intact() {
     }
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
-    fs::write(root.join("art.psd"), b"historical").unwrap();
-    let repo = Repository::init(root, vec!["art.psd".into()]).unwrap();
+    fs::write(root.join("art.clip"), b"historical").unwrap();
+    let repo = Repository::init(root, vec!["art.clip".into()]).unwrap();
     let id = repo.head().unwrap().unwrap();
-    let entry = repo.entry(&id, "art.psd").unwrap();
+    let entry = repo.entry(&id, "art.clip").unwrap();
     assert!(matches!(
         repo.reconstruct(&entry, &mut FullDisk),
         Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::StorageFull
     ));
     assert_eq!(repo.head().unwrap().as_deref(), Some(id.as_str()));
-    assert_eq!(fs::read(root.join("art.psd")).unwrap(), b"historical");
+    assert_eq!(fs::read(root.join("art.clip")).unwrap(), b"historical");
     assert_eq!(repo.health().unwrap().versions, 1);
 }
 
@@ -127,13 +142,13 @@ fn rejects_traversal_ads_and_symlinked_files() {
     let repo = Repository::init(temp.path(), vec!["art.clip".into()]).unwrap();
     for unsafe_path in [
         "../outside.clip",
-        "C:/outside.psd",
+        "C:/outside.clip",
         "art.clip:stream",
         ".ARTLOG/HEAD",
         ".Git/config",
         ".artlog-restore-recovery/file.clip",
-        ".artlog-staged-temp/file.psd",
-        "CON.psd",
+        ".artlog-staged-temp/file.clip",
+        "CON.clip",
         "Lpt9.clip",
         "folder/NUL.ext",
     ] {
@@ -145,7 +160,7 @@ fn rejects_traversal_ads_and_symlinked_files() {
 }
 
 #[test]
-fn history_ignores_orphan_commit_and_preview_prefix_verifies_chunks() {
+fn history_ignores_orphan_commit() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let bytes: Vec<u8> = (0..1_400_000).map(|i| (i % 251) as u8).collect();
@@ -156,8 +171,6 @@ fn history_ignores_orphan_commit_and_preview_prefix_verifies_chunks() {
         .capture(Kind::Checkpoint, "Orphan candidate", "")
         .unwrap()
         .unwrap();
-    let entry = repo.entry(&checkpoint.id, "art.clip").unwrap();
-    assert_eq!(repo.read_prefix(&entry, 512).unwrap(), bytes[..512]);
     fs::write(
         repo.metadata().join("refs/heads/main"),
         format!("{baseline}\n"),
@@ -179,10 +192,10 @@ fn large_file_streams_across_many_content_chunks_and_restores_exactly() {
         state ^= state << 5;
         bytes.push(state as u8);
     }
-    fs::write(root.join("large.psd"), &bytes).unwrap();
-    let repo = Repository::init(root, vec!["large.psd".into()]).unwrap();
+    fs::write(root.join("large.clip"), &bytes).unwrap();
+    let repo = Repository::init(root, vec!["large.clip".into()]).unwrap();
     let id = repo.head().unwrap().unwrap();
-    let entry = repo.entry(&id, "large.psd").unwrap();
+    let entry = repo.entry(&id, "large.clip").unwrap();
     assert!(entry.chunks.len() >= 3, "expected multiple bounded chunks");
     for chunk in &entry.chunks {
         let object = repo
@@ -205,13 +218,13 @@ fn normalizes_settings_and_blocks_capture_while_restore_recovery_is_pending() {
     fs::write(temp.path().join("art.clip"), b"art").unwrap();
     let repo = Repository::init(temp.path(), vec!["art.clip".into()]).unwrap();
     repo.set_settings(Settings {
-        tracked: vec!["z.psd".into(), "a.clip".into(), "a.clip".into()],
+        tracked: vec!["z.clip".into(), "a.clip".into(), "a.clip".into()],
         auto_capture: false,
         debounce_ms: 250,
     })
     .unwrap();
     let settings = repo.settings().unwrap();
-    assert_eq!(settings.tracked, vec!["a.clip", "z.psd"]);
+    assert_eq!(settings.tracked, vec!["a.clip", "z.clip"]);
     assert!(!settings.auto_capture);
     for debounce_ms in [249, 10_001] {
         assert!(repo

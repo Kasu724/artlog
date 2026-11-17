@@ -1,2 +1,2 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Keep LF on checkout so Windows and macOS use the same formatter input.
+* text=auto eol=lf

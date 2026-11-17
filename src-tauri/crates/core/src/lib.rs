@@ -51,7 +51,6 @@ pub struct Settings {
 #[serde(rename_all = "camelCase")]
 pub struct ScanEntry {
     pub path: String,
-    pub artwork: bool,
     pub size: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -116,7 +115,7 @@ impl Repository {
             auto_capture: true,
             debounce_ms: 1200,
         };
-        normalize_settings(&mut settings)?;
+        normalize_tracking_settings(&mut settings)?;
         fs::create_dir(&metadata)
             .map_err(|e| Error::io("create repository directory", &metadata, e))?;
         for name in ["commits", "manifests", "objects", "staging", "refs/heads"] {
@@ -182,7 +181,7 @@ impl Repository {
         &self.id
     }
     pub fn settings(&self) -> Result<Settings> {
-        let s: Settings = read_json(&self.metadata.join("config.json"))?;
+        let mut s: Settings = read_json(&self.metadata.join("config.json"))?;
         let mut normalized = s.clone();
         normalize_settings(&mut normalized)?;
         if normalized.tracked != s.tracked {
@@ -190,10 +189,13 @@ impl Repository {
                 "tracked paths are duplicated or unsorted".into(),
             ));
         }
+        // Older projects may track other formats. Preserve the saved config
+        // until the user changes settings and keep those files in history.
+        s.tracked.retain(|path| is_clip_document(Path::new(path)));
         Ok(s)
     }
     pub fn set_settings(&self, mut settings: Settings) -> Result<()> {
-        normalize_settings(&mut settings)?;
+        normalize_tracking_settings(&mut settings)?;
         let _guard = self.with_write_lock()?;
         atomic_json(&self.metadata.join("config.json"), &settings)
     }
@@ -333,7 +335,15 @@ impl Repository {
             Some(id) => Some(self.commit(id)?),
             None => None,
         };
-        if kind == Kind::Auto && latest.as_ref().is_some_and(|c| c.files == files) {
+        if kind == Kind::Auto
+            && latest.as_ref().is_some_and(|commit| {
+                commit
+                    .files
+                    .iter()
+                    .filter(|entry| is_clip_document(Path::new(&entry.path)))
+                    .eq(&files)
+            })
+        {
             return Ok(None);
         }
         if kind == Kind::Auto && title.trim().is_empty() {
@@ -400,42 +410,6 @@ impl Repository {
             )));
         }
         Ok(())
-    }
-    /// Reads a bounded source prefix from verified immutable chunks for a best-effort preview adapter.
-    pub fn read_prefix(&self, entry: &Entry, limit: usize) -> Result<Vec<u8>> {
-        const PREVIEW_PREFIX_MAX: usize = 32 * 1024 * 1024;
-        if limit > PREVIEW_PREFIX_MAX {
-            return Err(Error::Invalid("preview prefix exceeds 32 MiB".into()));
-        }
-        validate_relative(&entry.path)?;
-        let mut out = Vec::with_capacity(limit.min(entry.size as usize));
-        for cid in &entry.chunks {
-            if out.len() >= limit {
-                break;
-            }
-            let path = safe_object_path(&self.metadata, cid)?;
-            let meta = fs::symlink_metadata(&path)
-                .map_err(|e| Error::io("read preview source object", &path, e))?;
-            if !meta.is_file() || is_link(&meta) || meta.len() as usize > CHUNK_MAX {
-                return Err(Error::Corrupt(format!("unsafe or oversized object: {cid}")));
-            }
-            let mut bytes = Vec::with_capacity(meta.len() as usize);
-            File::open(&path)
-                .and_then(|mut f| f.read_to_end(&mut bytes))
-                .map_err(|e| Error::io("read preview source object", &path, e))?;
-            if blake3::hash(&bytes).to_hex().as_str() != cid {
-                return Err(Error::Corrupt(format!("object hash mismatch: {cid}")));
-            }
-            let n = (limit - out.len()).min(bytes.len());
-            out.extend_from_slice(&bytes[..n]);
-        }
-        if out.len() != limit.min(entry.size as usize) {
-            return Err(Error::Corrupt(format!(
-                "incomplete preview source: {}",
-                entry.path
-            )));
-        }
-        Ok(out)
     }
     pub fn source_path(&self, path: &str) -> Result<PathBuf> {
         validate_relative(path)?;
@@ -874,6 +848,26 @@ fn is_link(m: &fs::Metadata) -> bool {
 fn is_link(m: &fs::Metadata) -> bool {
     m.file_type().is_symlink()
 }
+pub fn is_clip_document(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("clip"))
+}
+
+fn normalize_tracking_settings(settings: &mut Settings) -> Result<()> {
+    normalize_settings(settings)?;
+    if let Some(path) = settings
+        .tracked
+        .iter()
+        .find(|path| !is_clip_document(Path::new(path)))
+    {
+        return Err(Error::Invalid(format!(
+            "ArtLog only tracks Clip Studio Paint (.clip) files: {path}"
+        )));
+    }
+    Ok(())
+}
+
 fn normalize_settings(settings: &mut Settings) -> Result<()> {
     if !(250..=10_000).contains(&settings.debounce_ms) {
         return Err(Error::Invalid(
@@ -1063,7 +1057,7 @@ fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScanEntry>) -> Result<()> {
         }
         if m.is_dir() {
             scan_dir(root, &e.path(), out)?
-        } else if m.is_file() {
+        } else if m.is_file() && is_clip_document(Path::new(name)) {
             let p = e
                 .path()
                 .strip_prefix(root)
@@ -1072,19 +1066,10 @@ fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScanEntry>) -> Result<()> {
                 .map(|c| c.as_os_str().to_string_lossy())
                 .collect::<Vec<_>>()
                 .join("/");
-            let artwork = matches!(
-                e.path()
-                    .extension()
-                    .and_then(|x| x.to_str())
-                    .map(|s| s.to_ascii_lowercase())
-                    .as_deref(),
-                Some("clip" | "psd")
-            );
             out.push(ScanEntry {
                 path: p,
-                artwork,
                 size: m.len(),
-            })
+            });
         }
     }
     Ok(())
@@ -1119,3 +1104,62 @@ pub mod formats;
 pub mod index;
 pub mod restore;
 pub mod watcher;
+
+#[cfg(test)]
+mod tracking_tests {
+    use super::*;
+
+    #[test]
+    fn reopens_legacy_project_with_clip_only_capture_and_preserves_archived_bytes() {
+        let folder = tempfile::tempdir().unwrap();
+        let clip = "drawing.clip";
+        let legacy = "legacy.psd";
+        fs::write(folder.path().join(clip), b"first drawing").unwrap();
+        fs::write(folder.path().join(legacy), b"archived art").unwrap();
+        let repo = Repository::init(folder.path(), vec![clip.into()]).unwrap();
+        let initial = repo.history().unwrap().remove(0);
+        let mut files = initial.files.clone();
+        files.push(
+            repo.capture_entry(legacy, &repo.source_path(legacy).unwrap())
+                .unwrap(),
+        );
+        let archived = repo
+            .write_commit(Some(initial.id), files, Kind::Checkpoint, "Legacy", "")
+            .unwrap()
+            .unwrap();
+        let config = repo.metadata().join("config.json");
+        atomic_json(
+            &config,
+            &Settings {
+                tracked: vec![clip.into(), legacy.into()],
+                auto_capture: true,
+                debounce_ms: 1200,
+            },
+        )
+        .unwrap();
+        let saved_config = fs::read(&config).unwrap();
+        drop(repo);
+
+        let reopened = Repository::open(folder.path()).unwrap();
+        assert_eq!(reopened.settings().unwrap().tracked, [clip]);
+        assert_eq!(fs::read(config).unwrap(), saved_config);
+        fs::write(folder.path().join(legacy), b"current art").unwrap();
+        assert!(reopened.capture(Kind::Auto, "", "").unwrap().is_none());
+        fs::write(folder.path().join(clip), b"next drawing").unwrap();
+        let next = reopened.capture(Kind::Auto, "", "").unwrap().unwrap();
+        assert_eq!(next.files.len(), 1);
+        assert_eq!(next.files[0].path, clip);
+        assert_eq!(next.parent.as_deref(), Some(archived.id.as_str()));
+        assert!(formats::get(&reopened, &archived.id, legacy)
+            .unwrap()
+            .is_none());
+        assert!(restore::in_place(&reopened, &archived.id, legacy, legacy).is_err());
+        let copy = folder.path().join("copy.psd");
+        restore::as_copy(&reopened, &archived.id, legacy, &copy).unwrap();
+        assert_eq!(fs::read(copy).unwrap(), b"archived art");
+        assert_eq!(
+            fs::read(folder.path().join(legacy)).unwrap(),
+            b"current art"
+        );
+    }
+}

@@ -20,9 +20,9 @@ fn temp_dir(label: &str) -> PathBuf {
 fn cache_can_be_deleted_and_rebuilt_from_portable_history() {
     let project = temp_dir("project");
     let cache = temp_dir("cache");
-    fs::write(project.join("drawing.psd"), b"first version").unwrap();
-    let repo = Repository::init(&project, vec!["drawing.psd".into()]).unwrap();
-    fs::write(project.join("drawing.psd"), b"second version").unwrap();
+    fs::write(project.join("drawing.clip"), b"first version").unwrap();
+    let repo = Repository::init(&project, vec!["drawing.clip".into()]).unwrap();
+    fs::write(project.join("drawing.clip"), b"second version").unwrap();
     repo.capture(Kind::Checkpoint, "Line art approved", "Ready for color")
         .unwrap();
 
@@ -41,6 +41,6 @@ fn cache_can_be_deleted_and_rebuilt_from_portable_history() {
     );
     assert_eq!(
         rebuilt.list_files(&history[0].id).unwrap()[0].path,
-        "drawing.psd"
+        "drawing.clip"
     );
 }
