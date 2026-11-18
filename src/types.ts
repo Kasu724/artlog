@@ -64,8 +64,10 @@ export type Preview = {
   dataUrl: string;
   width: number;
   height: number;
-  adapter: "export";
+  adapter: "clip" | "export";
   adapterVersion: number;
 };
+
+export type CommitThumbnail = Preview & { path: string };
 
 export type ViewName = "history" | "files" | "settings";

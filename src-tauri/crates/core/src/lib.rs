@@ -646,12 +646,16 @@ impl Repository {
             self.store_object(&id, &chunk)?;
             chunks.push(id);
         }
-        Ok(Entry {
+        let entry = Entry {
             path: rel.into(),
             size: original_size,
             hash,
             chunks,
-        })
+        };
+        // Derive from the verified staging file, before it is discarded.
+        // Preview errors are independent from the exact-byte snapshot.
+        let _ = formats::cache_embedded(self, &entry, &mut staged);
+        Ok(entry)
     }
     fn store_object(&self, id: &str, data: &[u8]) -> Result<()> {
         valid_id(id)?;

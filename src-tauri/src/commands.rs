@@ -1,5 +1,5 @@
 use artlog_core::{
-    formats::{self, Preview},
+    formats::{self, CommitThumbnail, Preview},
     index::ProjectIndex,
     is_clip_document, restore,
     watcher::{WatchHandle, WatchState},
@@ -440,10 +440,18 @@ pub(crate) async fn get_preview(
     id: String,
     path: String,
 ) -> Reply<Option<Preview>> {
-    on_project(state, project_id, move |repo| {
-        formats::get(repo, &id, &path).map_err(message)
-    })
-    .await
+    let repo = on_project(state, project_id, |project| Ok(project.repo.clone())).await?;
+    background(move || formats::get(&repo, &id, &path).map_err(message)).await
+}
+
+#[tauri::command]
+pub(crate) async fn get_commit_thumbnail(
+    state: State<'_, Desktop>,
+    project_id: String,
+    id: String,
+) -> Reply<Option<CommitThumbnail>> {
+    let repo = on_project(state, project_id, |project| Ok(project.repo.clone())).await?;
+    background(move || formats::commit_thumbnail(&repo, &id).map_err(message)).await
 }
 
 #[tauri::command]

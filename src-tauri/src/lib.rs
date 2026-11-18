@@ -19,6 +19,7 @@ pub fn run() {
             commands::restore_in_place,
             commands::repository_health,
             commands::get_preview,
+            commands::get_commit_thumbnail,
             commands::comparison_versions,
             commands::attach_preview,
         ])

@@ -57,6 +57,7 @@ export default function App() {
   const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [checkpointTitle, setCheckpointTitle] = useState("");
   const [checkpointNote, setCheckpointNote] = useState("");
+  const [previewRevision, setPreviewRevision] = useState(0);
   const [restoreTarget, setRestoreTarget] = useState<{
     id: string;
     file: FileVersion;
@@ -125,6 +126,7 @@ export default function App() {
       setSettingsDraft(next.settings);
       setSelectedId(next.commits[0]?.id ?? "");
       setSelectedFiles([]);
+      setPreviewRevision(0);
       setSelectedPath("");
       setSetup(null);
       setView("history");
@@ -647,6 +649,8 @@ export default function App() {
             {view === "history" && (
               <div className="history-layout">
                 <HistoryTimeline
+                  projectId={project.id}
+                  previewRevision={previewRevision}
                   commits={project.commits}
                   selectedId={selectedCommit?.id ?? ""}
                   onSelect={setSelectedId}
@@ -683,6 +687,9 @@ export default function App() {
                           currentCommit={selectedCommit}
                           commits={project.commits}
                           path={selectedPath}
+                          onPreviewChange={() =>
+                            setPreviewRevision((revision) => revision + 1)
+                          }
                         />
                       ) : selectedPath ? (
                         <section

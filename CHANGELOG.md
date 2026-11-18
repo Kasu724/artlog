@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Generate thumbnails automatically from saved `.clip` canvas previews and
+  display them in History, including existing checkpoints.
 - Track and capture Clip Studio Paint (`.clip`) files. Attach PNG or JPEG
   exports for visual comparisons.
 - Restore historical files of other formats as verified copies.

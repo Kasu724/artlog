@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CommitThumbnail,
   FileVersion,
   Preview,
   ProjectView,
@@ -52,6 +53,8 @@ export const artlog = {
     invoke<RepositoryHealth>("repository_health", { projectId }),
   getPreview: (projectId: string, id: string, path: string) =>
     invoke<Preview | null>("get_preview", { projectId, id, path }),
+  getCommitThumbnail: (projectId: string, id: string) =>
+    invoke<CommitThumbnail | null>("get_commit_thumbnail", { projectId, id }),
   attachPreview: (
     projectId: string,
     id: string,

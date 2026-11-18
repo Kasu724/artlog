@@ -21,9 +21,13 @@ has no outbound traffic when the device is connected.
    existing file. To replace a working file, close it in Clip Studio Paint, confirm
    the named target, and let ArtLog record its safety snapshot first.
 
-To preview a version, export it as PNG or JPEG from Clip Studio Paint and
-attach the export in ArtLog. Use **Restore as copy** to open and export an
-older version. Previews are flattened, scaled to at most
+ArtLog automatically reads the embedded canvas preview from each saved
+`.clip` version and shows a thumbnail in History. Existing versions generate
+their thumbnails when viewed. For checkpoints containing several files,
+History shows the first available `.clip` preview.
+You can also attach a PNG or JPEG export, which takes priority over the
+embedded preview. Use **Restore as copy** to open and export an older version
+whose embedded preview is unavailable. Previews are flattened, scaled to at most
 1,024 pixels on the long edge, and may not match editor color management.
 Two available previews can be panned and zoomed together. Matching dimensions
 allow overlay and pixel difference. All versions remain exactly restorable

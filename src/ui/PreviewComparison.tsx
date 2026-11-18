@@ -96,11 +96,13 @@ export function PreviewComparison({
   currentCommit,
   commits,
   path,
+  onPreviewChange,
 }: {
   projectId: string;
   currentCommit: CommitSummary;
   commits: CommitSummary[];
   path: string;
+  onPreviewChange?: () => void;
 }) {
   const current = usePreview(projectId, currentCommit.id, path);
   const [compareId, setCompareId] = useState("");
@@ -234,7 +236,10 @@ export function PreviewComparison({
           { name: "PNG or JPEG preview", extensions: ["png", "jpg", "jpeg"] },
         ],
       });
-      if (typeof imagePath === "string") await pane.attach(imagePath);
+      if (typeof imagePath === "string") {
+        await pane.attach(imagePath);
+        onPreviewChange?.();
+      }
     } catch (cause) {
       setAttachError(errorMessage(cause));
     }
@@ -621,7 +626,9 @@ function PreviewPane({
 }) {
   const adapterNote =
     state.state === "ready"
-      ? `Artist-provided PNG/JPEG export · approximate visual reference · ${state.preview.width} × ${state.preview.height}`
+      ? state.preview.adapter === "clip"
+        ? `Clip Studio Paint thumbnail · ${state.preview.width} × ${state.preview.height}`
+        : `Artist-provided PNG/JPEG export · approximate visual reference · ${state.preview.width} × ${state.preview.height}`
       : "";
   return (
     <div className="preview-pane">
@@ -703,7 +710,7 @@ function PreviewPane({
             onClick={onAttach}
             title={`Attach a flattened PNG or JPEG export as an approximate reference for ${commit.title}, ${path}`}
           >
-            {state.state === "ready"
+            {state.state === "ready" && state.preview.adapter === "export"
               ? "Replace attached preview…"
               : "Attach PNG/JPEG export…"}
           </button>

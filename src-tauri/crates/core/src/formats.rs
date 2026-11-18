@@ -1,4 +1,6 @@
-//! Attach a flattened export to an archived Clip Studio Paint version.
+//! Derive previews from archived CLIP bytes or attach a flattened export.
+mod clip;
+
 use crate::{is_clip_document, Entry, Error, Repository, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::{DynamicImage, ImageFormat, ImageReader, Limits};
@@ -14,6 +16,7 @@ const PNG_LIMIT: usize = 5 * 1024 * 1024;
 const MAX_PREVIEW_EDGE: u32 = 1024;
 const MAX_SOURCE_EDGE: u32 = 8192;
 const MAX_SOURCE_PIXELS: u64 = 24_000_000;
+const THUMBNAIL_EDGE: u32 = 160;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,12 +28,84 @@ pub struct Preview {
     pub adapter_version: u8,
 }
 
+#[derive(Serialize)]
+pub struct CommitThumbnail {
+    pub path: String,
+    #[serde(flatten)]
+    pub preview: Preview,
+}
+
 pub fn get(repo: &Repository, id: &str, path: &str) -> Result<Option<Preview>> {
     if !is_clip_document(Path::new(path)) {
         return Ok(None);
     }
     let entry = repo.entry(id, path)?;
-    Ok(cached(repo, &entry))
+    get_entry(repo, &entry)
+}
+
+pub fn commit_thumbnail(repo: &Repository, id: &str) -> Result<Option<CommitThumbnail>> {
+    let commit = repo.commit(id)?;
+    for entry in commit
+        .files
+        .iter()
+        .filter(|entry| is_clip_document(Path::new(&entry.path)))
+    {
+        // A missing or unreadable preview in one file must not hide the others.
+        if let Ok(Some(preview)) = get_entry(repo, entry) {
+            let Some((_, encoded)) = preview.data_url.split_once(',') else {
+                continue;
+            };
+            let Ok(bytes) = STANDARD.decode(encoded) else {
+                continue;
+            };
+            let Some(image) = decode(&bytes, ImageFormat::Png) else {
+                continue;
+            };
+            let (preview, _) = encode(
+                image.thumbnail(THUMBNAIL_EDGE, THUMBNAIL_EDGE),
+                preview.adapter,
+            )?;
+            return Ok(Some(CommitThumbnail {
+                path: entry.path.clone(),
+                preview,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn get_entry(repo: &Repository, entry: &Entry) -> Result<Option<Preview>> {
+    if let Some(CachedPreview::Ready(preview)) = cached(repo, entry, "export") {
+        return Ok(Some(preview));
+    }
+    if let Some(cached) = cached(repo, entry, "clip") {
+        return Ok(cached.preview());
+    }
+    let staging = repo.staging()?;
+    let mut source = tempfile::tempfile_in(&staging)
+        .map_err(|error| Error::io("stage archived preview", &staging, error))?;
+    repo.reconstruct(entry, &mut source)?;
+    cache_embedded(repo, entry, &mut source)
+}
+
+pub(crate) fn cache_embedded(
+    repo: &Repository,
+    entry: &Entry,
+    source: &mut File,
+) -> Result<Option<Preview>> {
+    if let Some(cached) = cached(repo, entry, "clip") {
+        return Ok(cached.preview());
+    }
+    let image = clip::extract(source)
+        .map_err(|error| Error::io("read embedded preview", &entry.path, error))?;
+    let Some(image) = image else {
+        let _ = store(repo, entry, &[], "clip");
+        return Ok(None);
+    };
+    let (preview, bytes) = encode(image, "clip")?;
+    // Cache failures never prevent saving or viewing an otherwise valid version.
+    let _ = store(repo, entry, &bytes, "clip");
+    Ok(Some(preview))
 }
 
 pub fn attach(repo: &Repository, id: &str, path: &str, export: &Path) -> Result<Preview> {
@@ -56,8 +131,8 @@ pub fn attach(repo: &Repository, id: &str, path: &str, export: &Path) -> Result<
                     .into(),
             )
         })?;
-    let (preview, bytes) = encode(image)?;
-    store(repo, &entry, &bytes)?;
+    let (preview, bytes) = encode(image, "export")?;
+    store(repo, &entry, &bytes, "export")?;
     Ok(preview)
 }
 
@@ -100,7 +175,7 @@ fn valid_dimensions(width: u32, height: u32) -> bool {
         && u64::from(width) * u64::from(height) <= MAX_SOURCE_PIXELS
 }
 
-fn encode(image: DynamicImage) -> Result<(Preview, Vec<u8>)> {
+fn encode(image: DynamicImage, adapter: &'static str) -> Result<(Preview, Vec<u8>)> {
     let image = if image.width().max(image.height()) > MAX_PREVIEW_EDGE {
         image.thumbnail(MAX_PREVIEW_EDGE, MAX_PREVIEW_EDGE)
     } else {
@@ -112,15 +187,15 @@ fn encode(image: DynamicImage) -> Result<(Preview, Vec<u8>)> {
         .write_to(&mut output, ImageFormat::Png)
         .map_err(|err| Error::Invalid(format!("Could not create preview: {err}")))?;
     let bytes = output.into_inner();
-    Ok((make_preview(&bytes, width, height), bytes))
+    Ok((make_preview(&bytes, width, height, adapter), bytes))
 }
 
-fn make_preview(bytes: &[u8], width: u32, height: u32) -> Preview {
+fn make_preview(bytes: &[u8], width: u32, height: u32, adapter: &'static str) -> Preview {
     Preview {
         data_url: format!("data:image/png;base64,{}", STANDARD.encode(bytes)),
         width,
         height,
-        adapter: "export",
+        adapter,
         adapter_version: 1,
     }
 }
@@ -166,12 +241,28 @@ fn preview_dir(repo: &Repository, create: bool) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn cache_filename(entry: &Entry) -> String {
-    format!("{}-export-v1.bin", entry.hash)
+fn cache_filename(entry: &Entry, adapter: &str) -> String {
+    format!("{}-{adapter}-v1.bin", entry.hash)
 }
 
-fn cached(repo: &Repository, entry: &Entry) -> Option<Preview> {
-    let path = preview_dir(repo, false).ok()?.join(cache_filename(entry));
+enum CachedPreview {
+    Ready(Preview),
+    Unavailable,
+}
+
+impl CachedPreview {
+    fn preview(self) -> Option<Preview> {
+        match self {
+            Self::Ready(preview) => Some(preview),
+            Self::Unavailable => None,
+        }
+    }
+}
+
+fn cached(repo: &Repository, entry: &Entry, adapter: &'static str) -> Option<CachedPreview> {
+    let path = preview_dir(repo, false)
+        .ok()?
+        .join(cache_filename(entry, adapter));
     if !plain_file(&path) {
         return None;
     }
@@ -180,16 +271,21 @@ fn cached(repo: &Repository, entry: &Entry) -> Option<Preview> {
     if blake3::hash(bytes).as_bytes() != checksum {
         return None;
     }
+    if bytes.is_empty() {
+        return Some(CachedPreview::Unavailable);
+    }
     let (width, height) = reader(bytes, ImageFormat::Png).into_dimensions().ok()?;
     if width.min(height) == 0 || width.max(height) > MAX_PREVIEW_EDGE {
         return None;
     }
-    Some(make_preview(bytes, width, height))
+    Some(CachedPreview::Ready(make_preview(
+        bytes, width, height, adapter,
+    )))
 }
 
-fn store(repo: &Repository, entry: &Entry, bytes: &[u8]) -> Result<()> {
+fn store(repo: &Repository, entry: &Entry, bytes: &[u8], adapter: &str) -> Result<()> {
     let dir = preview_dir(repo, true)?;
-    let path = dir.join(cache_filename(entry));
+    let path = dir.join(cache_filename(entry, adapter));
     let mut staged = tempfile::Builder::new()
         .prefix(".preview-")
         .tempfile_in(&dir)

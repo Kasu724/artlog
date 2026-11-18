@@ -1,4 +1,6 @@
-import type { CommitSummary, FileVersion } from "../types";
+import { useEffect, useRef, useState } from "react";
+import { artlog } from "../api";
+import type { CommitSummary, CommitThumbnail, FileVersion } from "../types";
 import { formatBytes, formatDate, isClipFile } from "./format";
 import { Icon } from "./Icon";
 import "./history.css";
@@ -16,10 +18,14 @@ function kindName(kind: CommitSummary["kind"]): string {
 }
 
 export function HistoryTimeline({
+  projectId,
+  previewRevision = 0,
   commits,
   selectedId,
   onSelect,
 }: {
+  projectId: string;
+  previewRevision?: number;
   commits: CommitSummary[];
   selectedId: string;
   onSelect: (id: string) => void;
@@ -37,7 +43,9 @@ export function HistoryTimeline({
           <div className="timeline-list">
             {commits.map((commit) => (
               <TimelineEntry
-                key={commit.id}
+                key={`${projectId}:${commit.id}`}
+                projectId={projectId}
+                previewRevision={previewRevision}
                 commit={commit}
                 selected={commit.id === selectedId}
                 onSelect={() => onSelect(commit.id)}
@@ -51,10 +59,14 @@ export function HistoryTimeline({
 }
 
 function TimelineEntry({
+  projectId,
+  previewRevision,
   commit,
   selected,
   onSelect,
 }: {
+  projectId: string;
+  previewRevision: number;
   commit: CommitSummary;
   selected: boolean;
   onSelect: () => void;
@@ -88,8 +100,96 @@ function TimelineEntry({
           {commit.note ||
             `${commit.fileCount} tracked file${commit.fileCount === 1 ? "" : "s"}`}
         </span>
+        <TimelineThumbnail
+          key={previewRevision}
+          projectId={projectId}
+          commit={commit}
+          previewRevision={previewRevision}
+        />
       </span>
     </button>
+  );
+}
+
+function TimelineThumbnail({
+  projectId,
+  commit,
+  previewRevision,
+}: {
+  projectId: string;
+  commit: CommitSummary;
+  previewRevision: number;
+}) {
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const [thumbnail, setThumbnail] = useState<CommitThumbnail | null>();
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let active = true;
+    let requested = false;
+    const load = () => {
+      if (requested) return;
+      requested = true;
+      void artlog
+        .getCommitThumbnail(projectId, commit.id)
+        .then((preview) => {
+          if (active) setThumbnail(preview);
+        })
+        .catch(() => {
+          if (active) setThumbnail(null);
+        });
+    };
+
+    const observer =
+      typeof IntersectionObserver === "undefined"
+        ? null
+        : new IntersectionObserver(
+            (entries) => {
+              if (entries.some((entry) => entry.isIntersecting)) {
+                load();
+                observer?.disconnect();
+              }
+            },
+            {
+              root: container.closest(".timeline-scroll"),
+              rootMargin: "120px",
+            },
+          );
+    if (observer) observer.observe(container);
+    else load();
+
+    return () => {
+      active = false;
+      observer?.disconnect();
+    };
+  }, [projectId, commit.id, previewRevision]);
+
+  return (
+    <span className="timeline-thumbnail" ref={containerRef}>
+      {thumbnail ? (
+        <img
+          src={thumbnail.dataUrl}
+          alt={`Thumbnail of ${thumbnail.path} for ${commit.title}`}
+          title={thumbnail.path}
+          width={thumbnail.width}
+          height={thumbnail.height}
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          onError={() => setThumbnail(null)}
+        />
+      ) : (
+        <span
+          className="timeline-thumbnail-placeholder"
+          role="img"
+          aria-label={`${thumbnail === null ? "Thumbnail unavailable" : "Loading thumbnail"} for ${commit.title}`}
+        >
+          <Icon name="file" />
+          <span>{thumbnail === null ? "No thumbnail" : "Loading…"}</span>
+        </span>
+      )}
+    </span>
   );
 }
 
