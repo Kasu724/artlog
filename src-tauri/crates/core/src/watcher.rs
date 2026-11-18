@@ -120,6 +120,14 @@ impl WatchHandle {
     pub fn rescan(&self) {
         let _ = self.control.send(Control::Rescan);
     }
+
+    /// Wait for any in-flight capture before moving project data from a worker thread.
+    pub fn stop(mut self) {
+        let _ = self.control.send(Control::Stop);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 impl Drop for WatchHandle {
@@ -199,6 +207,21 @@ fn run_worker(
         }
         if stop {
             break;
+        }
+        if repo.pending_history_operation().unwrap_or(true) {
+            if !recovering {
+                emit(
+                    &callback,
+                    WatchState::Paused,
+                    "Reopen this location to finish the interrupted history operation.".into(),
+                    false,
+                );
+            }
+            recovering = true;
+            pending.clear();
+            capture_empty = false;
+            force_reconcile = true;
+            continue;
         }
 
         for _ in 0..256 {

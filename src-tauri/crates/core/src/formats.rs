@@ -44,11 +44,20 @@ pub fn get(repo: &Repository, id: &str, path: &str) -> Result<Option<Preview>> {
 }
 
 pub fn commit_thumbnail(repo: &Repository, id: &str) -> Result<Option<CommitThumbnail>> {
+    thumbnail(repo, id, None)
+}
+
+pub fn thumbnail(
+    repo: &Repository,
+    id: &str,
+    path: Option<&str>,
+) -> Result<Option<CommitThumbnail>> {
     let commit = repo.commit(id)?;
     for entry in commit
         .files
         .iter()
         .filter(|entry| is_clip_document(Path::new(&entry.path)))
+        .filter(|entry| path.is_none_or(|path| path == entry.path))
     {
         // A missing or unreadable preview in one file must not hide the others.
         if let Ok(Some(preview)) = get_entry(repo, entry) {
@@ -216,14 +225,14 @@ fn plain_file(path: &Path) -> bool {
         .is_ok_and(|meta| ordinary(&meta) && meta.is_file())
 }
 
-fn preview_dir(repo: &Repository, create: bool) -> Result<PathBuf> {
-    let base = repo.metadata();
+fn preview_dir(repo: &Repository, entry: &Entry, create: bool) -> Result<PathBuf> {
+    let base = crate::projects::preview_base(repo, entry)?;
     let dir = base.join("previews");
     let check = |path: &Path| {
         path.symlink_metadata()
             .is_ok_and(|meta| ordinary(&meta) && meta.is_dir())
     };
-    if !check(base) {
+    if !check(&base) {
         return Err(Error::Corrupt(
             "The repository directory is unavailable.".into(),
         ));
@@ -260,7 +269,7 @@ impl CachedPreview {
 }
 
 fn cached(repo: &Repository, entry: &Entry, adapter: &'static str) -> Option<CachedPreview> {
-    let path = preview_dir(repo, false)
+    let path = preview_dir(repo, entry, false)
         .ok()?
         .join(cache_filename(entry, adapter));
     if !plain_file(&path) {
@@ -284,7 +293,7 @@ fn cached(repo: &Repository, entry: &Entry, adapter: &'static str) -> Option<Cac
 }
 
 fn store(repo: &Repository, entry: &Entry, bytes: &[u8], adapter: &str) -> Result<()> {
-    let dir = preview_dir(repo, true)?;
+    let dir = preview_dir(repo, entry, true)?;
     let path = dir.join(cache_filename(entry, adapter));
     let mut staged = tempfile::Builder::new()
         .prefix(".preview-")

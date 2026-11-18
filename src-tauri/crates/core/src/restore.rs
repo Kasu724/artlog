@@ -159,6 +159,11 @@ fn replace_locked(
     after_displace: impl FnOnce(&Path),
 ) -> Result<RestoreOutcome> {
     let entry = repo.entry(version, path)?;
+    if crate::projects::file_path(repo, &entry)? != path {
+        return Err(Error::Invalid(
+            "This file has a different working path now. Restore this version as a copy.".into(),
+        ));
+    }
     let target = repo.source_path(path)?;
     if !target.is_file()
         || !repo

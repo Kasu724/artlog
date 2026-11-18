@@ -60,6 +60,8 @@ pub struct Entry {
     pub size: u64,
     pub hash: String,
     pub chunks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +102,9 @@ pub struct Repository {
     root: PathBuf,
     metadata: PathBuf,
     id: String,
+    legacy_namespace: String,
+    version: u32,
+    binding: Option<projects::Binding>,
 }
 impl Repository {
     pub fn init(root: &Path, tracked: Vec<String>) -> Result<Self> {
@@ -118,39 +123,59 @@ impl Repository {
         normalize_tracking_settings(&mut settings)?;
         fs::create_dir(&metadata)
             .map_err(|e| Error::io("create repository directory", &metadata, e))?;
-        for name in ["commits", "manifests", "objects", "staging", "refs/heads"] {
-            fs::create_dir_all(metadata.join(name))
-                .map_err(|e| Error::io("create repository directory", metadata.join(name), e))?;
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        atomic_json(
-            &metadata.join("format.json"),
-            &Format {
-                format_version: FORMAT_VERSION,
-                repository_id: id.clone(),
-                app_version: env!("CARGO_PKG_VERSION").into(),
-            },
+        let repo = Self::init_at(
+            root,
+            metadata,
+            uuid::Uuid::new_v4().to_string(),
+            FORMAT_VERSION,
         )?;
-        atomic_json(&metadata.join("config.json"), &settings)?;
-        atomic_write(&metadata.join("HEAD"), b"main\n")?;
-        atomic_write(&metadata.join("refs/heads/main"), b"\n")?;
-        let repo = Self { root, metadata, id };
-        let _ = repo.capture(
+        repo.set_settings(settings)?;
+        repo.capture(
             Kind::Baseline,
             "Project created",
             "Initial project snapshot",
         )?;
         Ok(repo)
     }
+    fn init_at(root: PathBuf, metadata: PathBuf, id: String, version: u32) -> Result<Self> {
+        for name in ["commits", "manifests", "objects", "staging", "refs/heads"] {
+            fs::create_dir_all(metadata.join(name))
+                .map_err(|e| Error::io("create repository directory", metadata.join(name), e))?;
+        }
+        atomic_json(
+            &metadata.join("format.json"),
+            &Format {
+                format_version: version,
+                repository_id: id.clone(),
+                app_version: env!("CARGO_PKG_VERSION").into(),
+            },
+        )?;
+        atomic_write(&metadata.join("HEAD"), b"main\n")?;
+        atomic_write(&metadata.join("refs/heads/main"), b"\n")?;
+        Ok(Self {
+            root,
+            metadata,
+            legacy_namespace: id.clone(),
+            id,
+            version,
+            binding: None,
+        })
+    }
     pub fn open(root: &Path) -> Result<Self> {
         let root = canonical_root(root)?;
         let metadata = root.join(".artlog");
+        if projects::exists(&metadata.join("container.json"))? {
+            return projects::open_folder(&root);
+        }
+        Self::open_at(root, metadata, FORMAT_VERSION)
+    }
+    fn open_at(root: PathBuf, metadata: PathBuf, version: u32) -> Result<Self> {
         check_directory(&metadata)?;
         let format: Format = read_json(&metadata.join("format.json"))?;
-        if format.format_version != FORMAT_VERSION {
+        if format.format_version != version {
             return Err(Error::Invalid(format!(
                 "repository format {} is unsupported (expected {})",
-                format.format_version, FORMAT_VERSION
+                format.format_version, version
             )));
         }
         if uuid::Uuid::parse_str(&format.repository_id).is_err() {
@@ -162,10 +187,18 @@ impl Repository {
         check_directory(&metadata.join("staging"))?;
         check_directory(&metadata.join("refs"))?;
         check_directory(&metadata.join("refs/heads"))?;
+        let legacy_namespace = if version == projects::VERSION {
+            projects::legacy_namespace(&metadata)?
+        } else {
+            format.repository_id.clone()
+        };
         let repo = Self {
             root,
             metadata,
             id: format.repository_id,
+            legacy_namespace,
+            version,
+            binding: None,
         };
         repo.settings()?;
         repo.verify_head()?;
@@ -181,23 +214,32 @@ impl Repository {
         &self.id
     }
     pub fn settings(&self) -> Result<Settings> {
+        if self.version == projects::VERSION {
+            return projects::settings(self);
+        }
         let mut s: Settings = read_json(&self.metadata.join("config.json"))?;
         let mut normalized = s.clone();
         normalize_settings(&mut normalized)?;
-        if normalized.tracked != s.tracked {
-            return Err(Error::Corrupt(
-                "tracked paths are duplicated or unsorted".into(),
-            ));
+        if normalized.tracked.len() != s.tracked.len() {
+            return Err(Error::Corrupt("tracked paths are duplicated".into()));
         }
         // Older projects may track other formats. Preserve the saved config
         // until the user changes settings and keep those files in history.
+        s.tracked = normalized.tracked;
         s.tracked.retain(|path| is_clip_document(Path::new(path)));
         Ok(s)
     }
     pub fn set_settings(&self, mut settings: Settings) -> Result<()> {
         normalize_tracking_settings(&mut settings)?;
         let _guard = self.with_write_lock()?;
-        atomic_json(&self.metadata.join("config.json"), &settings)
+        self.set_settings_locked(settings)
+    }
+    fn set_settings_locked(&self, settings: Settings) -> Result<()> {
+        if self.version == projects::VERSION {
+            projects::set_settings(self, settings)
+        } else {
+            atomic_json(&self.metadata.join("config.json"), &settings)
+        }
     }
     pub fn scan(root: &Path) -> Result<Vec<ScanEntry>> {
         let root = canonical_root(root)?;
@@ -254,7 +296,8 @@ impl Repository {
             return Err(Error::Corrupt(format!("commit hash mismatch: {id}")));
         }
         let mut paths = std::collections::HashSet::new();
-        for entry in &c.files {
+        let mut identities = std::collections::HashSet::new();
+        for entry in &mut c.files {
             validate_relative(&entry.path)?;
             valid_id(&entry.hash)?;
             if entry.chunks.is_empty() && entry.size != 0 {
@@ -269,42 +312,44 @@ impl Repository {
                     entry.path
                 )));
             }
+            if self.version == projects::VERSION {
+                let id = entry.file_id.get_or_insert_with(|| {
+                    projects::legacy_file_id(&self.legacy_namespace, &entry.path)
+                });
+                projects::check_uuid(id)?;
+                if !identities.insert(id.clone()) {
+                    return Err(Error::Corrupt(format!(
+                        "duplicate file identity in commit {id}"
+                    )));
+                }
+            }
         }
         Ok(c)
     }
     pub fn capture(&self, kind: Kind, title: &str, note: &str) -> Result<Option<Commit>> {
         let _guard = self.with_write_lock()?;
         if matches!(kind, Kind::Auto | Kind::Checkpoint) && !self.recovery_paths()?.is_empty() {
-            return Err(Error::Invalid("A previous restore needs attention. Review the recovery folder in .artlog/staging before capturing another version.".into()));
+            return Err(Error::Invalid(format!("A previous restore needs attention. Review the recovery folders in {} before capturing another version.", self.staging()?.display())));
         }
         self.capture_locked(kind, title, note)
     }
     pub fn with_write_lock(&self) -> Result<WriteGuard> {
         check_directory(&self.metadata)?;
-        let path = self.metadata.join("write.lock");
-        if let Ok(meta) = fs::symlink_metadata(&path) {
-            if !meta.is_file() || is_link(&meta) {
-                return Err(Error::Corrupt("unsafe repository lock file".into()));
-            }
+        if let Some(binding) = &self.binding {
+            return binding.lock(self, true);
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|e| Error::io("open repository lock", &path, e))?;
-        file.try_lock_exclusive().map_err(|e| {
-            if e.kind() == io::ErrorKind::WouldBlock
-                || e.raw_os_error()
-                    .is_some_and(|code| Some(code) == fs2::lock_contended_error().raw_os_error())
-            {
-                Error::Busy
-            } else {
-                Error::io("lock repository", &path, e)
-            }
-        })?;
-        Ok(WriteGuard(file))
+        lock_file(&self.metadata.join("write.lock"), true)
+    }
+    pub fn with_read_lock(&self) -> Result<WriteGuard> {
+        if let Some(binding) = &self.binding {
+            return binding.lock(self, false);
+        }
+        lock_file(&self.metadata.join("write.lock"), false)
+    }
+    pub fn pending_history_operation(&self) -> Result<bool> {
+        self.binding
+            .as_ref()
+            .map_or(Ok(false), projects::Binding::pending)
     }
     pub(crate) fn capture_locked(
         &self,
@@ -314,6 +359,11 @@ impl Repository {
     ) -> Result<Option<Commit>> {
         let settings = self.settings()?;
         let parent = self.head()?;
+        let records = if self.version == projects::VERSION {
+            projects::records(self)?
+        } else {
+            Vec::new()
+        };
         let mut files = Vec::new();
         for rel in &settings.tracked {
             let source = self.source_path(rel)?;
@@ -327,7 +377,11 @@ impl Repository {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(Error::io("inspect tracked file", &source, e)),
             }
-            let entry = self.capture_entry(rel, &source)?;
+            let mut entry = self.capture_entry(rel, &source)?;
+            entry.file_id = records
+                .iter()
+                .find(|file| file.path == *rel)
+                .map(|file| file.id.clone());
             files.push(entry);
         }
         files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -340,7 +394,7 @@ impl Repository {
                 commit
                     .files
                     .iter()
-                    .filter(|entry| is_clip_document(Path::new(&entry.path)))
+                    .filter(|entry| settings.tracked.contains(&entry.path))
                     .eq(&files)
             })
         {
@@ -475,11 +529,7 @@ impl Repository {
         let mut out = Vec::new();
         for e in fs::read_dir(&d).map_err(|e| Error::io("inspect recovery staging", &d, e))? {
             let e = e.map_err(|e| Error::io("inspect recovery staging", &d, e))?;
-            if e.file_type()
-                .map_err(|e| Error::io("inspect recovery item", &d, e))?
-                .is_dir()
-                && e.file_name().to_string_lossy().starts_with("restore-")
-            {
+            if e.file_name().to_string_lossy().starts_with("restore-") {
                 out.push(e.file_name().to_string_lossy().into_owned());
             }
         }
@@ -647,6 +697,7 @@ impl Repository {
             chunks.push(id);
         }
         let entry = Entry {
+            file_id: None,
             path: rel.into(),
             size: original_size,
             hash,
@@ -701,26 +752,6 @@ impl Repository {
         title: &str,
         note: &str,
     ) -> Result<Option<Commit>> {
-        let manifest_bytes =
-            serde_json::to_vec(&files).map_err(|e| Error::Corrupt(e.to_string()))?;
-        let manifest_id = blake3::hash(&manifest_bytes).to_hex().to_string();
-        let manifest_path = self
-            .metadata
-            .join("manifests")
-            .join(format!("{manifest_id}.json"));
-        match manifest_path.symlink_metadata() {
-            Ok(_) => {
-                if read_json::<Vec<Entry>>(&manifest_path)? != files {
-                    return Err(Error::Corrupt(format!(
-                        "Stored manifest is invalid: {manifest_id}"
-                    )));
-                }
-            }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                atomic_write(&manifest_path, &manifest_bytes)?;
-            }
-            Err(err) => return Err(Error::io("inspect stored manifest", &manifest_path, err)),
-        }
         let timestamp = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
         let title = if title.trim().is_empty() {
             match kind {
@@ -734,16 +765,41 @@ impl Repository {
         } else {
             title.trim().into()
         };
-        let mut c = Commit {
+        self.write_record(Commit {
             id: String::new(),
             parent,
             timestamp,
             title,
             note: note.trim().into(),
             kind,
-            manifest_id,
+            manifest_id: String::new(),
             files,
-        };
+        })
+        .map(Some)
+    }
+    fn write_record(&self, mut c: Commit) -> Result<Commit> {
+        let files = &c.files;
+        let manifest_bytes =
+            serde_json::to_vec(&files).map_err(|e| Error::Corrupt(e.to_string()))?;
+        let manifest_id = blake3::hash(&manifest_bytes).to_hex().to_string();
+        let manifest_path = self
+            .metadata
+            .join("manifests")
+            .join(format!("{manifest_id}.json"));
+        match manifest_path.symlink_metadata() {
+            Ok(_) => {
+                if &read_json::<Vec<Entry>>(&manifest_path)? != files {
+                    return Err(Error::Corrupt(format!(
+                        "Stored manifest is invalid: {manifest_id}"
+                    )));
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                atomic_write(&manifest_path, &manifest_bytes)?;
+            }
+            Err(err) => return Err(Error::io("inspect stored manifest", &manifest_path, err)),
+        }
+        c.manifest_id = manifest_id;
         let id = commit_digest(&c)?;
         c.id = id.clone();
         let mut record = serde_json::to_value(&c).map_err(|e| Error::Corrupt(e.to_string()))?;
@@ -761,10 +817,41 @@ impl Repository {
             &self.metadata.join("refs/heads/main"),
             format!("{id}\n").as_bytes(),
         )?;
-        Ok(Some(c))
+        Ok(c)
     }
 }
 pub struct WriteGuard(File);
+fn lock_file(path: &Path, exclusive: bool) -> Result<WriteGuard> {
+    if path
+        .symlink_metadata()
+        .is_ok_and(|meta| !meta.is_file() || is_link(&meta))
+    {
+        return Err(Error::Corrupt("unsafe repository lock file".into()));
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| Error::io("open repository lock", path, e))?;
+    let lock = if exclusive {
+        FileExt::try_lock_exclusive(&file)
+    } else {
+        FileExt::try_lock_shared(&file)
+    };
+    lock.map_err(|e| {
+        if e.kind() == io::ErrorKind::WouldBlock
+            || e.raw_os_error()
+                .is_some_and(|code| Some(code) == fs2::lock_contended_error().raw_os_error())
+        {
+            Error::Busy
+        } else {
+            Error::io("lock repository", path, e)
+        }
+    })?;
+    Ok(WriteGuard(file))
+}
 impl Drop for WriteGuard {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.0);
@@ -1106,6 +1193,7 @@ fn gear(b: u8) -> u64 {
 }
 pub mod formats;
 pub mod index;
+pub mod projects;
 pub mod restore;
 pub mod watcher;
 
