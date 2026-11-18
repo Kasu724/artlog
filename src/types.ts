@@ -37,6 +37,10 @@ export type ProjectView = {
   recoveryPaths: string[];
   commits: CommitSummary[];
   capture?: CaptureStatus;
+  project: ProjectSummary;
+  files: ProjectFile[];
+  openWarning?: string;
+  metadata: string;
 };
 
 export type ScanEntry = {
@@ -44,12 +48,53 @@ export type ScanEntry = {
   size: number;
 };
 
-export type ScanResult = { exists: boolean; files: ScanEntry[] };
+export type ProjectSummary = {
+  id: string;
+  name: string;
+  mode: "folder" | "singleFile";
+  path: string | null;
+  recovered?: boolean;
+};
+
+export type ProjectFile = {
+  id: string;
+  path: string;
+  tracked: boolean;
+  hasHistory: boolean;
+  present: boolean;
+};
+
+export type ScanResult = {
+  exists: boolean;
+  files: ScanEntry[];
+  projects?: ProjectSummary[];
+};
+
+export type FileLocation = {
+  root: string;
+  path: string;
+  existing: ProjectSummary | null;
+  folders: ProjectSummary[];
+  shared: boolean;
+};
+
+export type TrashItem = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  filePath: string | null;
+  removedAt: string;
+  size: number;
+  kind: "project" | "fileHistory";
+  activeSize: number | null;
+  purgePending: boolean;
+};
 
 export type FileVersion = {
   path: string;
   size: number;
   hash: string;
+  fileId?: string | null;
 };
 
 export type RestoreOutcome = {
@@ -69,5 +114,6 @@ export type Preview = {
 };
 
 export type CommitThumbnail = Preview & { path: string };
+export type ComparisonVersion = { id: string; path: string };
 
 export type ViewName = "history" | "files" | "settings";

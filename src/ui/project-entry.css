@@ -55,6 +55,31 @@
   width: 19px;
   height: 19px;
 }
+.welcome-options {
+  display: grid;
+  gap: 10px;
+}
+.project-choices {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+.project-choices button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+.project-choice-name {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.project-choice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
 .compatibility {
   display: flex;
   align-items: center;

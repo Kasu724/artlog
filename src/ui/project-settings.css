@@ -19,6 +19,52 @@
   margin-bottom: 22px;
 }
 
+.managed-files {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.managed-files li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.managed-files li > div:first-child {
+  display: grid;
+  overflow-wrap: anywhere;
+}
+
+.managed-file-actions,
+.project-options form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 15px;
+}
+
+.project-options form {
+  margin: 14px 0;
+}
+
+.project-options label {
+  display: grid;
+  flex: 1 1 220px;
+  gap: 6px;
+}
+
+.settings-fieldset {
+  min-inline-size: 0;
+}
+
 .files-table {
   width: 100%;
   table-layout: fixed;

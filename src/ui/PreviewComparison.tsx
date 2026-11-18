@@ -96,25 +96,37 @@ export function PreviewComparison({
   currentCommit,
   commits,
   path,
+  fileId,
   onPreviewChange,
 }: {
   projectId: string;
   currentCommit: CommitSummary;
   commits: CommitSummary[];
   path: string;
+  fileId?: string | null;
   onPreviewChange?: () => void;
 }) {
   const current = usePreview(projectId, currentCommit.id, path);
-  const [compareId, setCompareId] = useState("");
+  const [selection, setSelection] = useState<{
+    id: string;
+    path: string;
+  } | null>(null);
+  const compareId = selection?.id ?? "";
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [candidates, setCandidates] = useState<CommitSummary[] | null>(null);
+  const [candidates, setCandidates] = useState<
+    (CommitSummary & { path: string })[] | null
+  >(null);
   const [candidateState, setCandidateState] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
   const [candidateError, setCandidateError] = useState("");
   const [candidateRetry, setCandidateRetry] = useState(0);
   const comparisonCommit = commits.find((commit) => commit.id === compareId);
-  const comparison = usePreview(projectId, comparisonCommit?.id ?? "", path);
+  const comparison = usePreview(
+    projectId,
+    comparisonCommit?.id ?? "",
+    selection?.path ?? "",
+  );
   const [mode, setMode] = useState<"side" | "overlay" | "difference">("side");
   const [opacity, setOpacity] = useState(50);
   const [zoom, setZoom] = useState(1);
@@ -153,14 +165,16 @@ export function PreviewComparison({
     setCandidateState("loading");
     setCandidateError("");
     void artlog
-      .comparisonVersions(projectId, path)
-      .then((ids) => {
+      .comparisonVersions(projectId, path, fileId)
+      .then((versions) => {
         if (!active) return;
         setCandidates(
-          ids
-            .filter((id) => id !== currentCommit.id)
-            .map((id) => commits.find((commit) => commit.id === id))
-            .filter((commit): commit is CommitSummary => commit !== undefined),
+          versions.flatMap(({ id, path }) => {
+            const commit =
+              id !== currentCommit.id &&
+              commits.find((commit) => commit.id === id);
+            return commit ? [{ ...commit, path }] : [];
+          }),
         );
         setCandidateState("ready");
       })
@@ -179,6 +193,7 @@ export function PreviewComparison({
     currentCommit.id,
     projectId,
     path,
+    fileId,
     candidateRetry,
   ]);
 
@@ -357,7 +372,11 @@ export function PreviewComparison({
                 aria-label="Compare with version"
                 value={compareId}
                 onChange={(event) => {
-                  setCompareId(event.target.value);
+                  setSelection(
+                    candidates.find(
+                      (commit) => commit.id === event.target.value,
+                    ) ?? null,
+                  );
                   resetView();
                 }}
               >

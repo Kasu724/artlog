@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type {
+  ProjectFile,
   ProjectView,
   RepositoryHealth,
   ScanEntry,
@@ -8,18 +10,107 @@ import { formatBytes } from "./format";
 import { Icon } from "./Icon";
 import "./project-settings.css";
 
+export type FileActions = {
+  viewHistory: (file: ProjectFile) => void;
+  stopTracking: (file: ProjectFile) => void;
+  deleteHistory: (file: ProjectFile) => void;
+  relink: (file: ProjectFile) => void;
+};
+
+function ManagedFiles({
+  files,
+  actions,
+  disabled,
+  busy,
+}: {
+  files: ProjectFile[];
+  actions: FileActions;
+  disabled: boolean;
+  busy: boolean;
+}) {
+  if (files.length === 0) return null;
+  return (
+    <ul className="managed-files">
+      {files.map((file) => (
+        <li key={file.id}>
+          <div>
+            <strong>{file.path}</strong>
+            <span className="muted-caption">
+              {file.tracked ? "Tracked" : "Not tracked"}
+              {!file.present && " · Working file missing"}
+            </span>
+          </div>
+          <div className="managed-file-actions">
+            {file.hasHistory && (
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy}
+                onClick={() => actions.viewHistory(file)}
+              >
+                View file history
+              </button>
+            )}
+            {file.tracked && (
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy || disabled}
+                onClick={() => actions.stopTracking(file)}
+              >
+                Stop tracking
+              </button>
+            )}
+            {!file.present && (
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy || disabled}
+                onClick={() => actions.relink(file)}
+              >
+                Link renamed file
+              </button>
+            )}
+            {file.hasHistory && (
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy || disabled}
+                onClick={() => actions.deleteHistory(file)}
+              >
+                Delete file history
+              </button>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function FilesView({
   root,
   files,
   settings,
   onGoSettings,
+  identities,
+  actions,
+  busy,
+  readOnly,
 }: {
   root: string;
   files: ScanEntry[];
   settings: Settings;
   onGoSettings: () => void;
+  identities: ProjectFile[];
+  actions: FileActions;
+  busy: boolean;
+  readOnly: boolean;
 }) {
   const tracked = new Set(settings.tracked);
+  const unidentified = files.filter(
+    (file) => !identities.some((known) => known.path === file.path),
+  );
   return (
     <section className="files-view">
       <h2>Files</h2>
@@ -27,7 +118,13 @@ export function FilesView({
         <Icon name="folder" />
         <span>{root}</span>
       </p>
-      {files.length === 0 ? (
+      <ManagedFiles
+        files={identities}
+        actions={actions}
+        busy={busy}
+        disabled={readOnly}
+      />
+      {files.length === 0 && identities.length === 0 ? (
         <div className="files-empty">
           <Icon name="file" />
           <h3>No .clip files found</h3>
@@ -37,39 +134,41 @@ export function FilesView({
           </p>
         </div>
       ) : (
-        <table className="files-table" aria-label="Project files">
-          <thead>
-            <tr>
-              <th scope="col">File</th>
-              <th scope="col">Status</th>
-              <th scope="col">Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            {files.map((file) => {
-              const isTracked = tracked.has(file.path);
-              return (
-                <tr key={file.path}>
-                  <td>
-                    <span className="files-table-name" title={file.path}>
-                      <Icon name="file" />
-                      <span>{file.path}</span>
-                    </span>
-                  </td>
-                  <td>
-                    <span
-                      className={isTracked ? "tracking-on" : "tracking-off"}
-                    >
-                      {isTracked && <Icon name="check" />}
-                      {isTracked ? "Tracked" : "Not tracked"}
-                    </span>
-                  </td>
-                  <td>{formatBytes(file.size)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        unidentified.length > 0 && (
+          <table className="files-table" aria-label="Project files">
+            <thead>
+              <tr>
+                <th scope="col">File</th>
+                <th scope="col">Status</th>
+                <th scope="col">Size</th>
+              </tr>
+            </thead>
+            <tbody>
+              {unidentified.map((file) => {
+                const isTracked = tracked.has(file.path);
+                return (
+                  <tr key={file.path}>
+                    <td>
+                      <span className="files-table-name" title={file.path}>
+                        <Icon name="file" />
+                        <span>{file.path}</span>
+                      </span>
+                    </td>
+                    <td>
+                      <span
+                        className={isTracked ? "tracking-on" : "tracking-off"}
+                      >
+                        {isTracked && <Icon name="check" />}
+                        {isTracked ? "Tracked" : "Not tracked"}
+                      </span>
+                    </td>
+                    <td>{formatBytes(file.size)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )
       )}
       <div className="files-footer">
         <button type="button" className="primary-button" onClick={onGoSettings}>
@@ -92,6 +191,7 @@ export function SettingsView({
   onToggle,
   onSave,
   onCheckHealth,
+  actions,
 }: {
   project: ProjectView;
   settings: Settings;
@@ -104,6 +204,7 @@ export function SettingsView({
   onToggle: (path: string) => void;
   onSave: (event: React.FormEvent<HTMLFormElement>) => void;
   onCheckHealth: () => void;
+  actions: FileActions;
 }) {
   const tracked = new Set(settings.tracked);
   const unchanged =
@@ -114,7 +215,10 @@ export function SettingsView({
   return (
     <form className="settings-view" onSubmit={onSave}>
       <h2>Settings</h2>
-      <section className="settings-section">
+      <fieldset
+        className="settings-section settings-fieldset"
+        disabled={busy || !!project.openWarning}
+      >
         <div className="section-heading">
           <h3>Automatic capture</h3>
           <label className="switch-control">
@@ -151,9 +255,12 @@ export function SettingsView({
             <span>10 s</span>
           </div>
         </div>
-      </section>
-      <section className="settings-section">
-        <h3>Files in history</h3>
+      </fieldset>
+      <fieldset
+        className="settings-section settings-fieldset"
+        disabled={busy || !!project.openWarning}
+      >
+        <h3>Tracked files</h3>
         <div className="settings-files">
           {files.length ? (
             files.map((file) => (
@@ -180,7 +287,22 @@ export function SettingsView({
             </div>
           )}
         </div>
-      </section>
+        <p className="muted-caption">
+          Clearing a checkbox stops future capture. Saved versions stay in
+          history.
+        </p>
+      </fieldset>
+      {project.files.length > 0 && (
+        <section className="settings-section">
+          <h3>File history</h3>
+          <ManagedFiles
+            files={project.files}
+            actions={actions}
+            busy={busy}
+            disabled={!!project.openWarning}
+          />
+        </section>
+      )}
       <section className="settings-section">
         <div className="section-heading">
           <h3>Repository health</h3>
@@ -230,11 +352,78 @@ export function SettingsView({
         </span>
         <button
           className="primary-button compact-button"
-          disabled={busy || unchanged}
+          disabled={busy || unchanged || !!project.openWarning}
         >
           {busy ? "Saving…" : "Save settings"}
         </button>
       </div>
     </form>
+  );
+}
+
+export function ProjectOptions({
+  project,
+  busy,
+  onRename,
+  onRemove,
+  onTrash,
+}: {
+  project: ProjectView;
+  busy: boolean;
+  onRename: (name: string) => void;
+  onRemove: () => void;
+  onTrash: () => void;
+}) {
+  const [name, setName] = useState(project.name);
+  return (
+    <section className="settings-section project-options">
+      <h3>Project management</h3>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onRename(name.trim());
+        }}
+      >
+        <label>
+          Project name
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={100}
+            disabled={busy || !!project.openWarning}
+          />
+        </label>
+        <button
+          type="submit"
+          className="secondary-button"
+          disabled={
+            busy ||
+            !!project.openWarning ||
+            !name.trim() ||
+            name.trim() === project.name
+          }
+        >
+          Rename project
+        </button>
+      </form>
+      <div className="managed-file-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={busy}
+          onClick={onTrash}
+        >
+          View ArtLog trash
+        </button>
+        <button
+          type="button"
+          className="danger-button"
+          disabled={busy || !!project.openWarning}
+          onClick={onRemove}
+        >
+          Remove project
+        </button>
+      </div>
+    </section>
   );
 }

@@ -21,19 +21,39 @@ export function HistoryTimeline({
   projectId,
   previewRevision = 0,
   commits,
+  scopedPaths,
+  scopeName,
+  loadingScope = false,
+  onClearScope,
   selectedId,
   onSelect,
 }: {
   projectId: string;
   previewRevision?: number;
   commits: CommitSummary[];
+  scopedPaths?: Record<string, string>;
+  scopeName?: string;
+  loadingScope?: boolean;
+  onClearScope?: () => void;
   selectedId: string;
   onSelect: (id: string) => void;
 }) {
   return (
     <section className="timeline-panel" aria-label="Version timeline">
       <h2>History</h2>
-      {commits.length === 0 ? (
+      {scopeName && (
+        <div className="history-scope">
+          <span title={scopeName}>{scopeName}</span>
+          <button className="text-button" onClick={onClearScope}>
+            Show project timeline
+          </button>
+        </div>
+      )}
+      {loadingScope ? (
+        <p className="muted-caption" role="status">
+          Loading file history…
+        </p>
+      ) : commits.length === 0 ? (
         <div className="timeline-empty">
           <h3>No snapshots yet</h3>
           <p>Save a named checkpoint to start your project history.</p>
@@ -47,6 +67,7 @@ export function HistoryTimeline({
                 projectId={projectId}
                 previewRevision={previewRevision}
                 commit={commit}
+                path={scopedPaths?.[commit.id]}
                 selected={commit.id === selectedId}
                 onSelect={() => onSelect(commit.id)}
               />
@@ -62,12 +83,14 @@ function TimelineEntry({
   projectId,
   previewRevision,
   commit,
+  path,
   selected,
   onSelect,
 }: {
   projectId: string;
   previewRevision: number;
   commit: CommitSummary;
+  path?: string;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -101,9 +124,10 @@ function TimelineEntry({
             `${commit.fileCount} tracked file${commit.fileCount === 1 ? "" : "s"}`}
         </span>
         <TimelineThumbnail
-          key={previewRevision}
+          key={`${previewRevision}:${path ?? ""}`}
           projectId={projectId}
           commit={commit}
+          path={path}
           previewRevision={previewRevision}
         />
       </span>
@@ -114,10 +138,12 @@ function TimelineEntry({
 function TimelineThumbnail({
   projectId,
   commit,
+  path,
   previewRevision,
 }: {
   projectId: string;
   commit: CommitSummary;
+  path?: string;
   previewRevision: number;
 }) {
   const containerRef = useRef<HTMLSpanElement>(null);
@@ -132,7 +158,7 @@ function TimelineThumbnail({
       if (requested) return;
       requested = true;
       void artlog
-        .getCommitThumbnail(projectId, commit.id)
+        .getCommitThumbnail(projectId, commit.id, path)
         .then((preview) => {
           if (active) setThumbnail(preview);
         })
@@ -163,7 +189,7 @@ function TimelineThumbnail({
       active = false;
       observer?.disconnect();
     };
-  }, [projectId, commit.id, previewRevision]);
+  }, [projectId, commit.id, previewRevision, path]);
 
   return (
     <span className="timeline-thumbnail" ref={containerRef}>
@@ -198,6 +224,7 @@ export function VersionDetail({
   files,
   selectedPath,
   busy,
+  canReplace = true,
   onSelectPath,
   onRestoreCopy,
   onRestoreInPlace,
@@ -206,6 +233,7 @@ export function VersionDetail({
   files: FileVersion[];
   selectedPath: string;
   busy: boolean;
+  canReplace?: boolean;
   onSelectPath: (path: string) => void;
   onRestoreCopy: () => void;
   onRestoreInPlace: () => void;
@@ -257,7 +285,7 @@ export function VersionDetail({
         >
           Restore as a copy
         </button>
-        {isClipFile(selectedPath) && (
+        {isClipFile(selectedPath) && canReplace && (
           <button
             className="text-button restore-place"
             disabled={busy || !selectedPath}

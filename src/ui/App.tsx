@@ -4,19 +4,39 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { artlog } from "../api";
 import type {
   CaptureStatus,
+  ComparisonVersion,
+  FileLocation,
   FileVersion,
+  ProjectFile,
   ProjectView,
   RepositoryHealth,
   RestoreOutcome,
   ScanEntry,
+  ScanResult,
   Settings,
+  TrashItem,
   ViewName,
 } from "../types";
 import { Icon } from "./Icon";
-import { FilesView, SettingsView } from "./ProjectSettings";
+import {
+  FilesView,
+  ProjectOptions,
+  SettingsView,
+  type FileActions,
+} from "./ProjectSettings";
 import { HistoryTimeline, VersionDetail } from "./History";
 import { PreviewComparison } from "./PreviewComparison";
-import { TrackSetup, Welcome, type Setup } from "./ProjectEntry";
+import {
+  ProjectChoices,
+  TrackSetup,
+  Welcome,
+  type Setup,
+} from "./ProjectEntry";
+import {
+  ConfirmationDialog,
+  TrashView,
+  type ManagementAction,
+} from "./ProjectManagement";
 import { errorMessage, fileName, isClipFile } from "./format";
 
 function statusName(status: CaptureStatus["state"]): string {
@@ -44,6 +64,26 @@ export default function App() {
   const [workingFiles, setWorkingFiles] = useState<ScanEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
   const [setup, setSetup] = useState<Setup | null>(null);
+  const [launcher, setLauncher] = useState(false);
+  const [folderChoice, setFolderChoice] = useState<{
+    root: string;
+    scan: ScanResult;
+  } | null>(null);
+  const [fileChoice, setFileChoice] = useState<{
+    absolute: string;
+    location: FileLocation;
+  } | null>(null);
+  const [trashRoot, setTrashRoot] = useState("");
+  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [management, setManagement] = useState<
+    (ManagementAction & { id?: string }) | null
+  >(null);
+  const [managementError, setManagementError] = useState("");
+  const [historyFile, setHistoryFile] = useState<ProjectFile | null>(null);
+  const [fileHistory, setFileHistory] = useState<ComparisonVersion[] | null>(
+    null,
+  );
   const [settingsDraft, setSettingsDraft] = useState<Settings | null>(null);
   const [health, setHealth] = useState<RepositoryHealth | null>(null);
   const [healthState, setHealthState] = useState<"idle" | "loading" | "error">(
@@ -71,19 +111,37 @@ export default function App() {
   const projectSnapshotRef = useRef<ProjectView | null>(null);
   projectSnapshotRef.current = project;
 
+  const timelineCommits = useMemo(
+    () =>
+      historyFile
+        ? (project?.commits.filter((commit) =>
+            fileHistory?.some((file) => file.id === commit.id),
+          ) ?? [])
+        : (project?.commits ?? []),
+    [project, historyFile, fileHistory],
+  );
+  const scopedPaths = useMemo(
+    () =>
+      fileHistory
+        ? Object.fromEntries(fileHistory.map(({ id, path }) => [id, path]))
+        : undefined,
+    [fileHistory],
+  );
   const selectedCommit = useMemo(
     () =>
-      project?.commits.find((commit) => commit.id === selectedId) ??
-      project?.commits[0] ??
+      timelineCommits.find((commit) => commit.id === selectedId) ??
+      timelineCommits[0] ??
       null,
-    [project, selectedId],
+    [timelineCommits, selectedId],
   );
+  const selectedFile = selectedFiles.find((item) => item.path === selectedPath);
 
   const projectId = project?.id;
   const refreshProject = useCallback(
     async (keepSelection = true, syncSettings = true) => {
       if (!projectId) return null;
       const next = await artlog.projectView(projectId);
+      if (projectSnapshotRef.current?.id !== projectId) return null;
       setProject(next);
       if (syncSettings) setSettingsDraft(next.settings);
       setSelectedId((previous) =>
@@ -98,9 +156,10 @@ export default function App() {
 
   const loadProjectFiles = useCallback(async (id: string) => {
     try {
-      setWorkingFiles(await artlog.projectFiles(id));
+      const files = await artlog.projectFiles(id);
+      if (projectSnapshotRef.current?.id === id) setWorkingFiles(files);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (projectSnapshotRef.current?.id === id) setError(errorMessage(cause));
     }
   }, []);
 
@@ -108,32 +167,49 @@ export default function App() {
     setHealthState("loading");
     setHealthError("");
     try {
-      setHealth(await artlog.repositoryHealth(id));
+      const result = await artlog.repositoryHealth(id);
+      if (projectSnapshotRef.current?.id !== id) return;
+      setHealth(result);
       setHealthState("idle");
     } catch (cause) {
+      if (projectSnapshotRef.current?.id !== id) return;
       setHealth(null);
       setHealthError(errorMessage(cause));
       setHealthState("error");
     }
   }
 
-  async function activate(root: string, tracked: string[] | null) {
+  function installProject(next: ProjectView) {
+    projectSnapshotRef.current = next;
+    setProject(next);
+    setSettingsDraft(next.settings);
+    setSelectedId(next.commits[0]?.id ?? "");
+    setSelectedFiles([]);
+    setPreviewRevision(0);
+    setSelectedPath("");
+    setHistoryFile(null);
+    setFileHistory(null);
+    setWorkingFiles([]);
+    setSetup(null);
+    setFolderChoice(null);
+    setFileChoice(null);
+    setTrashRoot("");
+    setLauncher(false);
+    setView("history");
+    setCapture(next.capture ?? null);
+    setHealth(null);
+    setHealthState("idle");
+    setHealthError("");
+    setRestoreResult(null);
+    setNotice("");
+  }
+
+  async function activate(operation: () => Promise<ProjectView>) {
     setBusy(true);
     setError("");
     try {
-      const next = await artlog.activateProject(root, tracked);
-      setProject(next);
-      setSettingsDraft(next.settings);
-      setSelectedId(next.commits[0]?.id ?? "");
-      setSelectedFiles([]);
-      setPreviewRevision(0);
-      setSelectedPath("");
-      setSetup(null);
-      setView("history");
-      setCapture(next.capture ?? null);
-      setHealth(null);
-      setHealthState("idle");
-      setHealthError("");
+      const next = await operation();
+      installProject(next);
       await loadProjectFiles(next.id);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -141,6 +217,19 @@ export default function App() {
       setBusy(false);
     }
   }
+
+  const openFolder = (root: string, tracked: string[] | null) =>
+    activate(() => artlog.activateProject(root, tracked));
+
+  const openInContainer = (root: string, id: string) =>
+    activate(() => artlog.openContainerProject(root, id));
+
+  const setupFolder = (root: string, scan: ScanResult) =>
+    setSetup({
+      root,
+      files: scan.files,
+      tracked: scan.files.map((file) => file.path),
+    });
 
   async function chooseProject() {
     setError("");
@@ -153,11 +242,12 @@ export default function App() {
       if (typeof path !== "string") return;
       setBusy(true);
       const scan = await artlog.scanProject(path);
-      if (scan.exists) {
-        await activate(path, null);
+      if (scan.exists && (scan.projects?.length ?? 1) === 1) {
+        await openFolder(path, null);
+      } else if (scan.projects?.length) {
+        setFolderChoice({ root: path, scan });
       } else {
-        const initial = scan.files.map((file) => file.path);
-        setSetup({ root: path, files: scan.files, tracked: initial });
+        setupFolder(path, scan);
       }
     } catch (cause) {
       setError(errorMessage(cause));
@@ -165,6 +255,76 @@ export default function App() {
       setBusy(false);
     }
   }
+
+  async function chooseClip() {
+    setError("");
+    try {
+      const absolute = await open({
+        multiple: false,
+        title: "Choose a Clip Studio Paint file",
+        filters: [{ name: "Clip Studio Paint", extensions: ["clip"] }],
+      });
+      if (typeof absolute !== "string") return;
+      setBusy(true);
+      const location = await artlog.inspectClip(absolute);
+      if (location.existing) {
+        await openInContainer(location.root, location.existing.id);
+      } else {
+        setFileChoice({ absolute, location });
+      }
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function showTrash(root: string) {
+    setTrashRoot(root);
+    setTrashItems([]);
+    setTrashLoading(true);
+    setError("");
+    try {
+      setTrashItems(await artlog.listTrash(root));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setTrashLoading(false);
+    }
+  }
+
+  async function chooseTrash() {
+    try {
+      const root = await open({
+        directory: true,
+        multiple: false,
+        title: "Choose a folder to view its ArtLog trash",
+      });
+      if (typeof root === "string") await showTrash(root);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  const activeHead = project?.commits[0]?.id;
+  useEffect(() => {
+    if (!projectId || !historyFile) return;
+    let active = true;
+    void artlog
+      .comparisonVersions(projectId, historyFile.path, historyFile.id)
+      .then((versions) => {
+        if (active) setFileHistory(versions);
+      })
+      .catch((cause) => {
+        if (active) {
+          setFileHistory([]);
+          setError(errorMessage(cause));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId, historyFile, activeHead]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -240,6 +400,9 @@ export default function App() {
   }, [projectId, refreshProject, loadProjectFiles]);
 
   const selectedCommitId = selectedCommit?.id;
+  const preferredPath = selectedCommitId
+    ? scopedPaths?.[selectedCommitId]
+    : undefined;
   useEffect(() => {
     if (!projectId || !selectedCommitId) {
       setSelectedFiles([]);
@@ -253,17 +416,19 @@ export default function App() {
       .then((files) => {
         if (!active) return;
         setSelectedFiles(files);
-        setSelectedPath((current) =>
-          files.some((file) => file.path === current)
-            ? current
-            : (files[0]?.path ?? ""),
+        setSelectedPath(
+          (current) =>
+            preferredPath ??
+            (files.some((file) => file.path === current)
+              ? current
+              : (files[0]?.path ?? "")),
         );
       })
       .catch((cause) => active && setError(errorMessage(cause)));
     return () => {
       active = false;
     };
-  }, [projectId, selectedCommitId]);
+  }, [projectId, selectedCommitId, preferredPath]);
 
   useEffect(() => {
     if (!restoreTarget) {
@@ -415,8 +580,13 @@ export default function App() {
     setError("");
     try {
       await artlog.closeProject();
+      projectSnapshotRef.current = null;
       setProject(null);
       setSetup(null);
+      setFolderChoice(null);
+      setFileChoice(null);
+      setTrashRoot("");
+      setLauncher(false);
       setCapture(null);
       setHealth(null);
       setNotice("");
@@ -427,6 +597,150 @@ export default function App() {
       setBusy(false);
     }
   }
+
+  function ask(action: ManagementAction & { id?: string }) {
+    setManagementError("");
+    setManagement(action);
+  }
+
+  async function updateProject(
+    operation: () => Promise<ProjectView>,
+    message: string,
+  ) {
+    setBusy(true);
+    setError("");
+    try {
+      const next = await operation();
+      setProject(next);
+      setSettingsDraft(next.settings);
+      setCapture(next.capture ?? null);
+      await loadProjectFiles(next.id);
+      setNotice(message);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function relink(file: ProjectFile) {
+    if (!project) return;
+    try {
+      const path = await open({
+        multiple: false,
+        defaultPath: project.root,
+        title: `Choose the new location of ${fileName(file.path)}`,
+        filters: [{ name: "Clip Studio Paint", extensions: ["clip"] }],
+      });
+      if (typeof path !== "string") return;
+      await updateProject(
+        () => artlog.relinkFile(project.id, file.id, path),
+        "Working file linked to its saved history.",
+      );
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  async function confirmManagement(typed: string) {
+    if (!management || busy) return;
+    const { kind, id } = management;
+    const root = management.location;
+    setBusy(true);
+    setManagementError("");
+    try {
+      if (kind === "purge" && id) {
+        await artlog.purgeTrash(root, id, typed);
+        setTrashItems((items) => items.filter((item) => item.id !== id));
+      } else if (kind === "restoreTrash" && id) {
+        const item = trashItems.find((entry) => entry.id === id);
+        const next = await artlog.restoreTrash(root, id);
+        installProject(next);
+        setNotice(
+          item?.projectId === next.project.id
+            ? "History restored from trash."
+            : "History restored from trash as a separate project.",
+        );
+        await loadProjectFiles(next.id);
+      } else if (project && kind === "removeProject") {
+        await artlog.removeProject(project.id, typed);
+        projectSnapshotRef.current = null;
+        setProject(null);
+        setCapture(null);
+        setNotice("");
+        await showTrash(root);
+      } else if (project && kind === "deleteFile" && id) {
+        const next = await artlog.deleteFileHistory(project.id, id, typed);
+        installProject(next);
+        setView(view);
+        setNotice("File history moved to ArtLog trash.");
+        await loadProjectFiles(next.id);
+      } else if (project && kind === "stop" && id) {
+        const next = await artlog.stopTracking(project.id, id);
+        setProject(next);
+        setSettingsDraft(next.settings);
+        setCapture(next.capture ?? null);
+        setNotice("Tracking stopped. Saved versions are available in History.");
+      }
+      setManagement(null);
+    } catch (cause) {
+      setManagementError(errorMessage(cause));
+      if (kind === "purge") {
+        void artlog
+          .listTrash(root)
+          .then(setTrashItems)
+          .catch(() => {});
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const fileActions: FileActions = {
+    viewHistory: (file) => {
+      setFileHistory(null);
+      setHistoryFile(file);
+      setView("history");
+    },
+    stopTracking: (file) => {
+      if (project)
+        ask({
+          kind: "stop",
+          id: file.id,
+          subject: file.path,
+          location: project.root,
+        });
+    },
+    deleteHistory: (file) => {
+      if (project)
+        ask({
+          kind: "deleteFile",
+          id: file.id,
+          subject: file.path,
+          location: project.root,
+          required: fileName(file.path),
+        });
+    },
+    relink: (file) => void relink(file),
+  };
+
+  const askTrash = (kind: "restoreTrash" | "purge", item: TrashItem) =>
+    ask({
+      kind,
+      id: item.id,
+      subject: item.filePath ?? item.projectName,
+      location: trashRoot,
+      required: kind === "purge" ? "DELETE" : undefined,
+      estimatedReclaim: kind === "purge" ? item.size : undefined,
+    });
+
+  const atProject =
+    !!project &&
+    !setup &&
+    !launcher &&
+    !folderChoice &&
+    !fileChoice &&
+    !trashRoot;
 
   const openRestore = (id: string, file: FileVersion) => {
     setError("");
@@ -460,7 +774,7 @@ export default function App() {
             <Icon name="brand" />
           </span>
         )}
-        {project && (
+        {atProject && (
           <nav className="project-nav" aria-label="Project views">
             {(
               [
@@ -475,7 +789,13 @@ export default function App() {
                   view === destination ? "nav-button active" : "nav-button"
                 }
                 aria-current={view === destination ? "page" : undefined}
-                onClick={() => setView(destination)}
+                onClick={() => {
+                  if (destination === "history") {
+                    setHistoryFile(null);
+                    setFileHistory(null);
+                  }
+                  setView(destination);
+                }}
               >
                 <Icon name={icon} />
                 <span>{label}</span>
@@ -485,14 +805,17 @@ export default function App() {
         )}
       </aside>
       <section className="workspace">
-        {project && !setup && (
+        {project && atProject && (
           <header className="topbar">
             <h1 className="project-title" aria-label={project.name}>
               <button
                 className="project-picker"
                 aria-label={`Open another project. Current project: ${project.name}`}
                 title={project.root}
-                onClick={chooseProject}
+                onClick={() => {
+                  setError("");
+                  setLauncher(true);
+                }}
                 disabled={busy}
               >
                 <Icon name="folder" />
@@ -524,7 +847,11 @@ export default function App() {
               {view === "history" && (
                 <button
                   className="primary-button compact-button"
-                  disabled={busy}
+                  disabled={
+                    busy ||
+                    !!project.openWarning ||
+                    project.recoveryPaths.length > 0
+                  }
                   onClick={() => {
                     setCheckpointOpen(true);
                     setError("");
@@ -537,7 +864,22 @@ export default function App() {
           </header>
         )}
 
-        {setup ? (
+        {trashRoot ? (
+          <TrashView
+            root={trashRoot}
+            items={trashItems}
+            loading={trashLoading}
+            error={error}
+            busy={busy}
+            onBack={() => {
+              setTrashRoot("");
+              setError("");
+            }}
+            onRetry={() => void showTrash(trashRoot)}
+            onRestore={(item) => askTrash("restoreTrash", item)}
+            onPurge={(item) => askTrash("purge", item)}
+          />
+        ) : setup ? (
           <TrackSetup
             setup={setup}
             busy={busy}
@@ -562,10 +904,59 @@ export default function App() {
                 current ? { ...current, tracked } : current,
               )
             }
-            onActivate={() => void activate(setup.root, setup.tracked)}
+            onActivate={() => void openFolder(setup.root, setup.tracked)}
           />
-        ) : !project ? (
-          <Welcome busy={busy} error={error} onChooseProject={chooseProject} />
+        ) : fileChoice ? (
+          <ProjectChoices
+            root={fileChoice.location.root}
+            projects={fileChoice.location.folders}
+            file={fileChoice.location}
+            busy={busy}
+            error={error}
+            onOpen={(id) => void openInContainer(fileChoice.location.root, id)}
+            onCreate={() =>
+              void activate(() => artlog.openClip(fileChoice.absolute))
+            }
+            onTrash={() => void showTrash(fileChoice.location.root)}
+            onBack={() => {
+              setFileChoice(null);
+              setError("");
+            }}
+          />
+        ) : folderChoice ? (
+          <ProjectChoices
+            root={folderChoice.root}
+            projects={folderChoice.scan.projects ?? []}
+            busy={busy}
+            error={error}
+            onOpen={(id) => void openInContainer(folderChoice.root, id)}
+            onCreate={
+              folderChoice.scan.exists
+                ? undefined
+                : () => setupFolder(folderChoice.root, folderChoice.scan)
+            }
+            onTrash={() => void showTrash(folderChoice.root)}
+            onBack={() => {
+              setFolderChoice(null);
+              setError("");
+            }}
+          />
+        ) : !project || launcher ? (
+          <Welcome
+            busy={busy}
+            error={error}
+            onChooseProject={chooseProject}
+            onChooseClip={chooseClip}
+            onChooseTrash={chooseTrash}
+            onCancel={
+              project
+                ? () => {
+                    setLauncher(false);
+                    setError("");
+                  }
+                : undefined
+            }
+          />
         ) : (
           <div className="project-view-shell">
             {notice && (
@@ -607,6 +998,11 @@ export default function App() {
                 {error}
               </div>
             )}
+            {project.openWarning && (
+              <p className="error-message project-error" role="alert">
+                {project.openWarning}
+              </p>
+            )}
             {project.recoveryPaths.length > 0 && (
               <section
                 className="recovery-panel"
@@ -623,8 +1019,7 @@ export default function App() {
                   {project.recoveryPaths.map((path) => (
                     <code className="recovery-path" key={path}>
                       {joinPath(
-                        project.root,
-                        ".artlog",
+                        project.metadata,
                         "staging",
                         path,
                         "recovery.json",
@@ -651,7 +1046,18 @@ export default function App() {
                 <HistoryTimeline
                   projectId={project.id}
                   previewRevision={previewRevision}
-                  commits={project.commits}
+                  commits={timelineCommits}
+                  scopedPaths={scopedPaths}
+                  scopeName={historyFile?.path}
+                  loadingScope={historyFile !== null && fileHistory === null}
+                  onClearScope={
+                    historyFile
+                      ? () => {
+                          setHistoryFile(null);
+                          setFileHistory(null);
+                        }
+                      : undefined
+                  }
                   selectedId={selectedCommit?.id ?? ""}
                   onSelect={setSelectedId}
                 />
@@ -666,6 +1072,19 @@ export default function App() {
                         files={selectedFiles}
                         selectedPath={selectedPath}
                         busy={busy}
+                        canReplace={
+                          !project.openWarning &&
+                          project.recoveryPaths.length === 0 &&
+                          (selectedFile?.fileId
+                            ? project.files.some(
+                                (file) =>
+                                  file.id === selectedFile.fileId &&
+                                  file.path === selectedPath &&
+                                  file.tracked &&
+                                  file.present,
+                              )
+                            : project.settings.tracked.includes(selectedPath))
+                        }
                         onSelectPath={setSelectedPath}
                         onRestoreCopy={() => {
                           const file = selectedFiles.find(
@@ -687,6 +1106,7 @@ export default function App() {
                           currentCommit={selectedCommit}
                           commits={project.commits}
                           path={selectedPath}
+                          fileId={selectedFile?.fileId}
                           onPreviewChange={() =>
                             setPreviewRevision((revision) => revision + 1)
                           }
@@ -724,27 +1144,61 @@ export default function App() {
                 files={workingFiles}
                 settings={project.settings}
                 onGoSettings={() => setView("settings")}
+                identities={project.files}
+                actions={fileActions}
+                busy={busy}
+                readOnly={!!project.openWarning}
               />
             )}
 
             {view === "settings" && settingsDraft && (
-              <SettingsView
-                project={project}
-                settings={settingsDraft}
-                health={health}
-                healthState={healthState}
-                healthError={healthError}
-                busy={busy}
-                files={workingFiles}
-                onChange={setSettingsDraft}
-                onToggle={toggleTracked}
-                onSave={(event) => void saveProjectSettings(event)}
-                onCheckHealth={() => void checkRepositoryHealth(project.id)}
-              />
+              <>
+                <SettingsView
+                  project={project}
+                  settings={settingsDraft}
+                  health={health}
+                  healthState={healthState}
+                  healthError={healthError}
+                  busy={busy}
+                  files={workingFiles}
+                  onChange={setSettingsDraft}
+                  onToggle={toggleTracked}
+                  onSave={(event) => void saveProjectSettings(event)}
+                  onCheckHealth={() => void checkRepositoryHealth(project.id)}
+                  actions={fileActions}
+                />
+                <ProjectOptions
+                  key={`${project.id}:${project.name}`}
+                  project={project}
+                  busy={busy}
+                  onRename={(name) =>
+                    void updateProject(
+                      () => artlog.renameProject(project.id, name),
+                      "Project renamed.",
+                    )
+                  }
+                  onRemove={() =>
+                    ask({
+                      kind: "removeProject",
+                      subject: project.name,
+                      location: project.root,
+                      required: project.name,
+                    })
+                  }
+                  onTrash={() => void showTrash(project.root)}
+                />
+              </>
             )}
           </div>
         )}
       </section>
+      <ConfirmationDialog
+        action={management}
+        busy={busy}
+        error={managementError}
+        onCancel={() => setManagement(null)}
+        onConfirm={(typed) => void confirmManagement(typed)}
+      />
 
       <dialog
         ref={checkpointDialogRef}

@@ -30,6 +30,7 @@ function project(commits: ProjectView["commits"]): ProjectView {
   return {
     id: "project-1",
     root: "C:\\art\\moss study",
+    metadata: "C:\\art\\moss study\\.artlog",
     name: "moss study",
     settings: {
       tracked: ["painting.clip"],
@@ -39,6 +40,13 @@ function project(commits: ProjectView["commits"]): ProjectView {
     size: 2048,
     recoveryPaths: [],
     commits,
+    project: {
+      id: "repository-1",
+      name: "moss study",
+      mode: "folder",
+      path: null,
+    },
+    files: [],
   };
 }
 
@@ -78,7 +86,12 @@ function wireProject(result = project([secondCommit, firstCommit])) {
           { path: "painting.clip", size: 24576, hash: "abcdef0123456789" },
         ]);
       case "comparison_versions":
-        return Promise.resolve(result.commits.map((commit) => commit.id));
+        return Promise.resolve(
+          result.commits.map((commit) => ({
+            id: commit.id,
+            path: "painting.clip",
+          })),
+        );
       case "get_preview":
         return Promise.resolve(null);
       case "attach_preview":
@@ -148,6 +161,166 @@ describe("ArtLog desktop workflows", () => {
     expect(invokeMock).toHaveBeenCalledWith("activate_project", {
       root: "C:\\art\\moss study",
       tracked: null,
+    });
+  });
+
+  it("offers the folder project or an independent project for the selected .clip", async () => {
+    const base = invokeMock.getMockImplementation();
+    const result = project([firstCommit]);
+    const path = "C:\\art\\moss study\\painting.clip";
+    const single: ProjectView = {
+      ...result,
+      id: "single-session",
+      name: "painting.clip",
+      project: {
+        id: "single-repo",
+        name: "painting.clip",
+        mode: "singleFile",
+        path: "painting.clip",
+      },
+    };
+    openMock.mockResolvedValue(path);
+    invokeMock.mockImplementation((command: string, args: unknown) => {
+      if (command === "inspect_clip")
+        return Promise.resolve({
+          root: result.root,
+          path: "painting.clip",
+          existing: null,
+          folders: [result.project],
+          shared: true,
+        });
+      if (command === "open_clip") return Promise.resolve(single);
+      return base?.(command, args);
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Open a .clip file" }));
+    expect(await screen.findByText(/independent histories/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /moss study folder project/i }),
+    ).toBeEnabled();
+    expect(invokeMock).not.toHaveBeenCalledWith("open_clip", { path });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open as a single-file project" }),
+    );
+    await screen.findByRole("heading", { name: "painting.clip" });
+    expect(invokeMock).toHaveBeenCalledWith("open_clip", { path });
+  });
+
+  it("requires the file name before deletion and refreshes the project session", async () => {
+    const file = {
+      id: "stable-file",
+      path: "painting.clip",
+      tracked: true,
+      present: true,
+      hasHistory: true,
+    };
+    const original = { ...project([secondCommit, firstCommit]), files: [file] };
+    wireProject(original);
+    const base = invokeMock.getMockImplementation();
+    const cleaned = {
+      ...original,
+      id: "new-session",
+      commits: [{ ...firstCommit, id: "new-head", fileCount: 0 }],
+      settings: { ...original.settings, tracked: [] },
+      files: [{ ...file, tracked: false, hasHistory: false }],
+    };
+    invokeMock.mockImplementation(
+      (command: string, args: { projectId?: string }) => {
+        if (command === "delete_file_history") return Promise.resolve(cleaned);
+        if (args?.projectId === cleaned.id && command === "project_state")
+          return Promise.resolve({
+            head: "new-head",
+            capture: {
+              projectId: cleaned.id,
+              state: "current",
+              message: "Up to date",
+            },
+          });
+        return base?.(command, args);
+      },
+    );
+    await openExistingProject();
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete file history" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText(/checkpoint ids may change/i)).toBeVisible();
+    const deletion = dialog.getByRole("button", {
+      name: "Delete file history",
+    });
+    expect(deletion).toBeDisabled();
+    fireEvent.change(dialog.getByRole("textbox"), {
+      target: { value: "painting.clip" },
+    });
+    fireEvent.click(deletion);
+    expect(
+      await screen.findByText("File history moved to ArtLog trash."),
+    ).toBeVisible();
+    expect(invokeMock).toHaveBeenCalledWith("delete_file_history", {
+      projectId: original.id,
+      fileId: file.id,
+      confirmation: "painting.clip",
+    });
+    expect(
+      screen.queryByRole("button", { name: "Delete file history" }),
+    ).toBeNull();
+    expect(invokeMock).toHaveBeenCalledWith("project_files", {
+      projectId: cleaned.id,
+    });
+  });
+
+  it("opens location trash after removing a project and separately confirms permanent deletion", async () => {
+    const base = invokeMock.getMockImplementation();
+    invokeMock.mockImplementation((command: string, args: unknown) => {
+      if (command === "remove_project" || command === "purge_trash")
+        return Promise.resolve();
+      if (command === "list_trash")
+        return Promise.resolve([
+          {
+            id: "archive-1",
+            projectId: "repository-1",
+            projectName: "moss study",
+            filePath: null,
+            removedAt: "2026-11-18T04:00:00Z",
+            size: 2048,
+            kind: "project",
+            purgePending: false,
+          },
+        ]);
+      return base?.(command, args);
+    });
+    await openExistingProject();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove project" }));
+    const removal = within(screen.getByRole("dialog"));
+    fireEvent.change(removal.getByRole("textbox"), {
+      target: { value: "moss study" },
+    });
+    fireEvent.click(removal.getByRole("button", { name: "Remove project" }));
+    expect(
+      await screen.findByRole("heading", { name: "ArtLog trash" }),
+    ).toBeVisible();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /permanently delete.*moss study/i,
+      }),
+    );
+    const purge = within(screen.getByRole("dialog"));
+    const button = purge.getByRole("button", { name: "Permanently delete" });
+    fireEvent.change(purge.getByRole("textbox"), {
+      target: { value: "delete" },
+    });
+    expect(button).toBeDisabled();
+    fireEvent.change(purge.getByRole("textbox"), {
+      target: { value: "DELETE" },
+    });
+    fireEvent.click(button);
+    await screen.findByText("Trash is empty for this folder.");
+    expect(invokeMock).toHaveBeenCalledWith("purge_trash", {
+      root: "C:\\art\\moss study",
+      id: "archive-1",
+      confirmation: "DELETE",
     });
   });
 
@@ -327,7 +500,9 @@ describe("ArtLog desktop workflows", () => {
               },
             });
           case "comparison_versions":
-            return Promise.resolve(["v1", "v2"]);
+            return Promise.resolve(
+              ["v1", "v2"].map((id) => ({ id, path: "painting.clip" })),
+            );
           case "repository_health":
             return Promise.resolve({ versions: 2, objects: 2 });
           case "list_commit_files":

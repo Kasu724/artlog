@@ -100,7 +100,11 @@ describe("History thumbnails", () => {
       name: "Thumbnail of drawing.clip for Approved line art",
     });
     expect(image).toHaveAttribute("src", "data:image/png;base64,second");
-    expect(getThumbnail).toHaveBeenCalledExactlyOnceWith("project", "second");
+    expect(getThumbnail).toHaveBeenCalledExactlyOnceWith(
+      "project",
+      "second",
+      undefined,
+    );
     expect(
       screen.getByRole("img", {
         name: "Loading thumbnail for Initial snapshot",
@@ -152,8 +156,8 @@ describe("History thumbnails", () => {
       }),
     ).toHaveAttribute("src", "data:image/png;base64,new");
     expect(getThumbnail.mock.calls).toEqual([
-      ["old-project", "second"],
-      ["new-project", "second"],
+      ["old-project", "second", undefined],
+      ["new-project", "second", undefined],
     ]);
   });
 

@@ -8,6 +8,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::scan_project,
             commands::activate_project,
+            commands::inspect_clip,
+            commands::open_clip,
+            commands::open_container_project,
             commands::close_project,
             commands::project_view,
             commands::project_state,
@@ -22,6 +25,14 @@ pub fn run() {
             commands::get_commit_thumbnail,
             commands::comparison_versions,
             commands::attach_preview,
+            commands::stop_tracking,
+            commands::relink_file,
+            commands::rename_project,
+            commands::delete_file_history,
+            commands::remove_project,
+            commands::list_trash,
+            commands::restore_trash,
+            commands::purge_trash,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ArtLog");

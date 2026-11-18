@@ -288,3 +288,10 @@
     max-height: 220px;
   }
 }
+.history-scope {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  padding: 0 0 8px;
+  overflow-wrap: anywhere;
+}

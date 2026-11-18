@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Open a single `.clip` directly or select related files for a shared folder
+  project. Both project types can coexist in the same folder.
+- Keep stable file identities, file-specific history and previews, and
+  project-local chunk reuse. Upgrade earlier projects while preserving their
+  checkpoint IDs.
+- Stop tracking a file, delete its active history, or remove a project.
+  Recover archives from ArtLog trash or permanently delete them with a
+  separate confirmation.
 - Generate thumbnails automatically from saved `.clip` canvas previews and
   display them in History, including existing checkpoints.
 - Track and capture Clip Studio Paint (`.clip`) files. Attach PNG or JPEG
