@@ -38,6 +38,8 @@ function project(commits: ProjectView["commits"]): ProjectView {
       debounceMs: 1200,
     },
     size: 2048,
+    historyCompression: true,
+    canRepackHistory: true,
     recoveryPaths: [],
     commits,
     project: {
@@ -830,6 +832,65 @@ describe("ArtLog desktop workflows", () => {
         },
       }),
     );
+  });
+
+  it("repacks history and turns compression off without saving a tracking draft", async () => {
+    wireProject();
+    const existing = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(
+      (command: string, params?: { mode?: string }) => {
+        if (command === "repack_history") {
+          return Promise.resolve(
+            params?.mode === "raw"
+              ? {
+                  size: 5000,
+                  report: {
+                    objectsRewritten: 1,
+                    beforeBytes: 500,
+                    afterBytes: 4000,
+                  },
+                }
+              : {
+                  size: 1500,
+                  report: {
+                    objectsRewritten: 1,
+                    beforeBytes: 4000,
+                    afterBytes: 500,
+                  },
+                },
+          );
+        }
+        if (command === "set_history_compression") return Promise.resolve(5000);
+        return existing(command, params);
+      },
+    );
+    await openExistingProject();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByLabelText("Automatic capture"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Compress existing history" }),
+    );
+    expect(await screen.findByText(/history compressed.*bytes/i)).toBeTruthy();
+    expect(invokeMock).toHaveBeenCalledWith("repack_history", {
+      projectId: "project-1",
+      mode: "compress",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Convert history to raw" }),
+    );
+    expect(await screen.findByText(/raw layout verified/i)).toBeTruthy();
+    expect(
+      screen.getByLabelText("Compress new content objects"),
+    ).not.toBeChecked();
+    expect(screen.getByLabelText("Automatic capture")).not.toBeChecked();
+    expect(screen.getByText("Unsaved settings")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Compress new content objects"));
+    expect(await screen.findByText("History compression is on.")).toBeTruthy();
+    expect(invokeMock).toHaveBeenCalledWith("set_history_compression", {
+      projectId: "project-1",
+      enabled: true,
+    });
+    expect(screen.getByLabelText("Compress new content objects")).toBeChecked();
   });
 
   it("keeps historical non-CLIP files copy-only and without previews", async () => {

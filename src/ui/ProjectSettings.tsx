@@ -2,6 +2,7 @@ import { useState } from "react";
 import type {
   ProjectFile,
   ProjectView,
+  RepackMode,
   RepositoryHealth,
   ScanEntry,
   Settings,
@@ -191,6 +192,8 @@ export function SettingsView({
   onToggle,
   onSave,
   onCheckHealth,
+  onCompression,
+  onRepack,
   actions,
 }: {
   project: ProjectView;
@@ -204,6 +207,8 @@ export function SettingsView({
   onToggle: (path: string) => void;
   onSave: (event: React.FormEvent<HTMLFormElement>) => void;
   onCheckHealth: () => void;
+  onCompression: (enabled: boolean) => void;
+  onRepack: (mode: RepackMode) => void;
   actions: FileActions;
 }) {
   const tracked = new Set(settings.tracked);
@@ -256,6 +261,56 @@ export function SettingsView({
           </div>
         </div>
       </fieldset>
+      {project.canRepackHistory && (
+        <fieldset
+          className="settings-section settings-fieldset"
+          disabled={busy}
+        >
+          <div className="section-heading">
+            <h3>History storage</h3>
+            {!project.openWarning && (
+              <label className="switch-control">
+                <input
+                  type="checkbox"
+                  aria-label="Compress new content objects"
+                  aria-describedby="history-compression-help"
+                  checked={project.historyCompression === true}
+                  onChange={(event) => onCompression(event.target.checked)}
+                />
+                <span aria-hidden="true" />
+              </label>
+            )}
+          </div>
+          {!project.openWarning && (
+            <p id="history-compression-help" className="muted-caption">
+              {project.historyCompression === null
+                ? "The compression setting could not be read. Use the switch to reset it."
+                : "Compress new content objects when it saves space. This setting applies immediately."}
+            </p>
+          )}
+          <div className="managed-file-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => onRepack("compress")}
+            >
+              Compress existing history
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => onRepack("raw")}
+            >
+              Convert history to raw
+            </button>
+          </div>
+          <p className="muted-caption">
+            Before downgrading ArtLog, convert this history to raw. This turns
+            off compression and can use more disk space. If conversion stops,
+            run it again to finish.
+          </p>
+        </fieldset>
+      )}
       <fieldset
         className="settings-section settings-fieldset"
         disabled={busy || !!project.openWarning}
@@ -309,7 +364,7 @@ export function SettingsView({
           <button
             type="button"
             className="text-button"
-            disabled={healthState === "loading"}
+            disabled={busy || healthState === "loading"}
             onClick={onCheckHealth}
           >
             {healthState === "loading"

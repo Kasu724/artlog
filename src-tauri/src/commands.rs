@@ -4,7 +4,7 @@ use artlog_core::{
     projects::{self, trash, Container, Mode, ProjectFile, Summary},
     restore,
     watcher::{WatchHandle, WatchState},
-    Commit, Health, Kind, Repository, ScanEntry, Settings,
+    Commit, Health, Kind, RepackMode, RepackReport, Repository, ScanEntry, Settings,
 };
 use serde::Serialize;
 use std::{
@@ -28,6 +28,7 @@ struct Opened {
     capture: Arc<Mutex<CaptureStatus>>,
     watcher: Option<WatchHandle>,
     open_warning: Option<String>,
+    can_repack_history: bool,
 }
 
 impl Deref for Opened {
@@ -45,13 +46,14 @@ impl Opened {
             "This saved history is read-only. You can browse checkpoints and restore copies."
                 .to_owned()
         });
-        Self::with_warning(repo, app, warning)
+        Self::with_warning(repo, app, warning, true)
     }
 
     fn with_warning(
         repo: Repository,
         app: &AppHandle,
         open_warning: Option<String>,
+        can_repack_history: bool,
     ) -> Reply<Self> {
         static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
         // A portable repository can be copied. Scope commands to the particular
@@ -85,6 +87,7 @@ impl Opened {
             capture,
             watcher: None,
             open_warning,
+            can_repack_history,
         };
         project.start_watcher(app);
         Ok(project)
@@ -178,6 +181,8 @@ pub(crate) struct ProjectView {
     root: String,
     name: String,
     settings: Settings,
+    history_compression: Option<bool>,
+    can_repack_history: bool,
     size: u64,
     recovery_paths: Vec<String>,
     commits: Vec<Version>,
@@ -187,6 +192,13 @@ pub(crate) struct ProjectView {
     #[serde(skip_serializing_if = "Option::is_none")]
     open_warning: Option<String>,
     metadata: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryRepack {
+    report: RepackReport,
+    size: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -278,6 +290,8 @@ fn view(repo: &Opened, app: &AppHandle) -> Reply<ProjectView> {
         root: display(repo.root()),
         name: summary.name.clone(),
         settings: repo.settings().map_err(message)?,
+        history_compression: repo.history_compression().ok(),
+        can_repack_history: repo.can_repack_history,
         size: repo.repository_size().map_err(message)?,
         recovery_paths: repo.recovery_paths().map_err(message)?,
         commits: history.into_iter().map(Version::from).collect(),
@@ -362,7 +376,7 @@ pub(crate) async fn open_container_project(
             Err(error) => {
                 let legacy = projects::readable_during_migration(root).map_err(|_| error.clone())?;
                 if legacy.id() != id { return Err(error); }
-                Opened::with_warning(legacy, &app, Some(format!("ArtLog could not upgrade this folder. Its saved history is available as copies. Reopen the folder to retry. {error}")))?
+                Opened::with_warning(legacy, &app, Some(format!("ArtLog could not upgrade this folder. Its saved history is available as copies. Reopen the folder to retry. {error}")), false)?
             }
         };
         replace_active(&mut active, project, &app)
@@ -490,6 +504,39 @@ pub(crate) async fn save_settings(
         repo.set_settings(settings).map_err(message)?;
         repo.rescan();
         view(repo, &app)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn set_history_compression(
+    state: State<'_, Desktop>,
+    project_id: String,
+    enabled: bool,
+) -> Reply<u64> {
+    on_project(state, project_id, move |repo| {
+        repo.writable()?;
+        repo.set_history_compression(enabled).map_err(message)?;
+        repo.repository_size().map_err(message)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn repack_history(
+    state: State<'_, Desktop>,
+    project_id: String,
+    mode: RepackMode,
+) -> Reply<HistoryRepack> {
+    on_project(state, project_id, move |repo| {
+        if !repo.can_repack_history {
+            return Err(
+                "Reopen this location to finish the history upgrade before repacking.".into(),
+            );
+        }
+        let report = repo.repack_history(mode).map_err(message)?;
+        let size = repo.repository_size().map_err(message)?;
+        Ok(HistoryRepack { report, size })
     })
     .await
 }

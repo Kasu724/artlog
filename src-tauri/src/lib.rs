@@ -16,6 +16,8 @@ pub fn run() {
             commands::list_commit_files,
             commands::create_checkpoint,
             commands::save_settings,
+            commands::set_history_compression,
+            commands::repack_history,
             commands::restore_copy,
             commands::restore_in_place,
             commands::repository_health,

@@ -1,7 +1,7 @@
 use artlog_core::{
     formats,
     projects::{self, trash, Container, Mode},
-    restore, Kind, Repository,
+    restore, Kind, RepackMode, Repository,
 };
 use std::{fs, io, path::Path, sync::Arc, time::Duration};
 
@@ -339,31 +339,34 @@ fn restores_conflicting_legacy_history_into_a_separate_project() {
 #[test]
 fn v2_in_place_restore_verifies_the_target_and_preserves_safety_bytes() {
     let root = sources();
+    let source = root.path().join("first.clip");
+    let original = vec![0x42; 100_000];
+    let working = vec![0x24; 100_000];
+    fs::write(&source, &original).unwrap();
     let project = Container::create(root.path())
         .unwrap()
         .open_or_create_single("first.clip")
         .unwrap();
     let baseline = project.history().unwrap().remove(0);
-    let source = root.path().join("first.clip");
-    fs::write(&source, b"working version before restore").unwrap();
+    assert!(project.repository_size().unwrap() < original.len() as u64);
+    fs::write(&source, &working).unwrap();
     assert!(restore::in_place(&project, &baseline.id, "first.clip", "second.clip").is_err());
-    assert_eq!(
-        fs::read(&source).unwrap(),
-        b"working version before restore"
-    );
+    assert_eq!(fs::read(&source).unwrap(), working);
     let outcome = restore::in_place(&project, &baseline.id, "first.clip", "first.clip").unwrap();
     let safety = project.entry(&outcome.safety_id, "first.clip").unwrap();
     let mut bytes = Vec::new();
     project.reconstruct(&safety, &mut bytes).unwrap();
-    assert_eq!(bytes, b"working version before restore");
+    assert_eq!(bytes, working);
     assert_eq!(safety.file_id, baseline.files[0].file_id);
-    assert_eq!(fs::read(&source).unwrap(), b"original bytes");
+    assert_eq!(fs::read(&source).unwrap(), original);
     assert_eq!(project.head().unwrap(), Some(outcome.commit_id));
 }
 
 #[test]
 fn recovered_history_does_not_take_the_active_file_slot() {
     let root = sources();
+    let original = vec![0x2c; 100_000];
+    fs::write(root.path().join("first.clip"), &original).unwrap();
     let container = Container::create(root.path()).unwrap();
     let single = container.open_or_create_single("first.clip").unwrap();
     trash::archive_project(&single, "first.clip").unwrap();
@@ -375,6 +378,14 @@ fn recovered_history_does_not_take_the_active_file_slot() {
     let sibling = container.open_or_create_single("second.clip").unwrap();
     assert!(sibling.metadata().ends_with(".artlog/projects/second.clip"));
     assert_eq!(recovered.mode, Mode::Folder);
+    let archived_history = container.open(&recovered.id).unwrap();
+    let baseline = archived_history.history().unwrap().remove(0);
+    let repack = archived_history.repack_history(RepackMode::Raw).unwrap();
+    assert_eq!(repack.objects_rewritten, 1);
+    assert_eq!(repack.after_bytes, original.len() as u64);
+    let destination = root.path().join("recovered.clip");
+    restore::as_copy(&archived_history, &baseline.id, "first.clip", &destination).unwrap();
+    assert_eq!(fs::read(destination).unwrap(), original);
     assert_eq!(
         container.open_or_create_single("first.clip").unwrap().id(),
         replacement.id()

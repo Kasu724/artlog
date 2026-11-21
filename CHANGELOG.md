@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Compress eligible history chunks losslessly with Zstandard. Settings can
+  repack existing history, disable compression for new objects, or verify a
+  conversion back to raw storage before downgrading.
 - Reopen recent projects from the home sidebar.
 - Choose a previous version above its preview, or click the preview area and
   pick a checkpoint from the timeline.

@@ -57,6 +57,30 @@ when previews are missing.
   a separate typed confirmation. ArtLog keeps trash until you restore or
   permanently delete it.
 
+## History compression
+
+ArtLog uses lossless Zstandard level 1 for new history objects by default. A
+chunk is compressed only when its stored size, including its header, saves at
+least 1% and 1 KiB. Savings vary by artwork because `.clip` can already contain
+compressed data. ArtLog still deduplicates chunks by their original bytes and
+verifies the original chunk and complete file during restore.
+
+In **Settings → History storage**, turn off **Compress new content objects** to
+store newly encountered chunks as raw bytes. Earlier objects remain readable and
+can still be reused across versions. Use **Compress existing history** to repack
+eligible objects already on disk. The result reports the measured change in
+stored content-object bytes. **Portable history** shows the current logical size
+of the open project's history, excluding preview files.
+
+Before downgrading to a build without compression support, run **Convert history
+to raw** in each affected project and wait for **Raw layout verified**. For
+history in **ArtLog trash**, restore it with this version first, then convert
+the restored history. The conversion turns off compression for the project,
+expands its objects and verifies the raw layout while preserving saved versions,
+previews, and working artwork. Raw conversion can need more disk space. If either
+operation stops, free space if needed and run the same operation again. Keep this
+version of ArtLog available until each conversion finishes successfully.
+
 ## Backup and recovery
 
 ArtLog upgrades earlier individual histories to filename-based directories.

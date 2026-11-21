@@ -37,6 +37,8 @@ export type ProjectView = {
   root: string;
   name: string;
   settings: Settings;
+  historyCompression: boolean | null;
+  canRepackHistory: boolean;
   size: number;
   recoveryPaths: string[];
   commits: CommitSummary[];
@@ -94,6 +96,13 @@ export type RestoreOutcome = {
 };
 
 export type RepositoryHealth = { versions: number; objects: number };
+
+export type RepackMode = "compress" | "raw";
+
+export type HistoryRepack = {
+  report: { objectsRewritten: number; beforeBytes: number; afterBytes: number };
+  size: number;
+};
 
 export type Preview = {
   dataUrl: string;

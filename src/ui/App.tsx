@@ -9,6 +9,7 @@ import type {
   ProjectFile,
   ProjectSummary,
   ProjectView,
+  RepackMode,
   RepositoryHealth,
   RestoreOutcome,
   ScanEntry,
@@ -499,6 +500,74 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function changeHistoryStorage(
+    progress: string,
+    change: () => Promise<{ size: number; enabled?: boolean; message: string }>,
+  ) {
+    if (!project || busy) return;
+    setBusy(true);
+    setError("");
+    setNotice(progress);
+    try {
+      const { size, enabled, message } = await change();
+      setProject((current) =>
+        current?.id === project.id
+          ? {
+              ...current,
+              size,
+              historyCompression: enabled ?? current.historyCompression,
+            }
+          : current,
+      );
+      setNotice(message);
+    } catch (cause) {
+      // A stopped raw conversion may already have disabled compression or expanded objects.
+      await refreshProject(true, false).catch(() => undefined);
+      setNotice("");
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleHistoryCompression(id: string, enabled: boolean) {
+    return changeHistoryStorage(
+      "Saving history compression setting…",
+      async () => ({
+        size: await artlog.setHistoryCompression(id, enabled),
+        enabled,
+        message: enabled
+          ? "History compression is on."
+          : "History compression is off.",
+      }),
+    );
+  }
+
+  function repackHistory(id: string, mode: RepackMode) {
+    const progress =
+      mode === "raw"
+        ? "Converting history to raw…"
+        : "Compressing existing history…";
+    return changeHistoryStorage(progress, async () => {
+      const { report, size } = await artlog.repackHistory(id, mode);
+      if (mode === "raw") {
+        const bytes = report.afterBytes.toLocaleString();
+        return {
+          size,
+          enabled: false,
+          message: `Raw layout verified. Compression is off. Content objects use ${bytes} bytes.`,
+        };
+      }
+      const saved = (report.beforeBytes - report.afterBytes).toLocaleString();
+      return {
+        size,
+        message: report.objectsRewritten
+          ? `History compressed. Saved ${saved} bytes in content objects.`
+          : "History verified. No additional objects met the savings threshold.",
+      };
+    });
   }
 
   function toggleTracked(path: string) {
@@ -1165,6 +1234,10 @@ export default function App() {
                   onToggle={toggleTracked}
                   onSave={(event) => void saveProjectSettings(event)}
                   onCheckHealth={() => void checkRepositoryHealth(project.id)}
+                  onCompression={(enabled) =>
+                    void toggleHistoryCompression(project.id, enabled)
+                  }
+                  onRepack={(mode) => void repackHistory(project.id, mode)}
                   actions={fileActions}
                 />
                 <ProjectOptions

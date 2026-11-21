@@ -3,10 +3,12 @@ import type {
   CommitThumbnail,
   ComparisonVersion,
   FileVersion,
+  HistoryRepack,
   Preview,
   ProjectView,
   ProjectState,
   RepositoryHealth,
+  RepackMode,
   RestoreOutcome,
   ScanEntry,
   ProjectSummary,
@@ -43,6 +45,10 @@ export const artlog = {
     invoke<ProjectView>("create_checkpoint", { projectId, title, note }),
   saveSettings: (projectId: string, settings: Settings) =>
     invoke<ProjectView>("save_settings", { projectId, settings }),
+  setHistoryCompression: (projectId: string, enabled: boolean) =>
+    invoke<number>("set_history_compression", { projectId, enabled }),
+  repackHistory: (projectId: string, mode: RepackMode) =>
+    invoke<HistoryRepack>("repack_history", { projectId, mode }),
   restoreCopy: (
     projectId: string,
     id: string,
