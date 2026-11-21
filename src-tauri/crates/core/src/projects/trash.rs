@@ -119,6 +119,9 @@ fn archive_file_with(
     let mut settings = repo.settings()?;
     settings.tracked.retain(|path| *path != file.path);
     replacement.set_settings_locked(settings)?;
+    if !repo.history_compression()? {
+        replacement.set_history_compression_locked(false)?;
+    }
     let mut parent = None;
     let mut copied = BTreeSet::new();
     let mut has_history = false;

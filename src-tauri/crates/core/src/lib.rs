@@ -358,6 +358,7 @@ impl Repository {
         note: &str,
     ) -> Result<Option<Commit>> {
         let settings = self.settings()?;
+        let compress = self.history_compression()?;
         let parent = self.head()?;
         let records = if self.version == projects::VERSION {
             projects::records(self)?
@@ -377,7 +378,7 @@ impl Repository {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(Error::io("inspect tracked file", &source, e)),
             }
-            let mut entry = self.capture_entry(rel, &source)?;
+            let mut entry = self.capture_entry(rel, &source, compress)?;
             entry.file_id = records
                 .iter()
                 .find(|file| file.path == *rel)
@@ -437,22 +438,15 @@ impl Repository {
         let mut full = blake3::Hasher::new();
         let mut length = 0u64;
         for cid in &entry.chunks {
-            valid_id(cid)?;
             let path = safe_object_path(&self.metadata, cid)?;
-            let meta = fs::symlink_metadata(&path)
-                .map_err(|e| Error::io("read stored object", &path, e))?;
-            if !meta.is_file() || is_link(&meta) || meta.len() as usize > CHUNK_MAX {
-                return Err(Error::Corrupt(format!("unsafe or oversized object: {cid}")));
-            }
-            let mut f = File::open(&path).map_err(|e| Error::io("read stored object", &path, e))?;
-            let mut bytes = Vec::with_capacity(meta.len() as usize);
-            f.read_to_end(&mut bytes)
-                .map_err(|e| Error::io("read stored object", &path, e))?;
-            if blake3::hash(&bytes).to_hex().as_str() != cid {
-                return Err(Error::Corrupt(format!("object hash mismatch: {cid}")));
-            }
+            let bytes = objects::read(&path, cid)?;
+            length = length
+                .checked_add(bytes.len() as u64)
+                .filter(|size| *size <= entry.size)
+                .ok_or_else(|| {
+                    Error::Corrupt(format!("file exceeds recorded size: {}", entry.path))
+                })?;
             full.update(&bytes);
-            length += bytes.len() as u64;
             output
                 .write_all(&bytes)
                 .map_err(|e| Error::io("write reconstructed file", &entry.path, e))?;
@@ -583,10 +577,10 @@ impl Repository {
             Ok(Some(id.to_owned()))
         }
     }
-    fn capture_entry(&self, rel: &str, source: &Path) -> Result<Entry> {
+    fn capture_entry(&self, rel: &str, source: &Path, compress: bool) -> Result<Entry> {
         let mut last = None;
         for _ in 0..CAPTURE_ATTEMPTS {
-            match self.capture_entry_once(rel, source) {
+            match self.capture_entry_once(rel, source, compress) {
                 Ok(x) => return Ok(x),
                 Err(e @ Error::Unstable(_)) => last = Some(e),
                 Err(e) => return Err(e),
@@ -594,7 +588,7 @@ impl Repository {
         }
         Err(last.unwrap_or_else(|| Error::Unstable(rel.to_owned())))
     }
-    fn capture_entry_once(&self, rel: &str, source: &Path) -> Result<Entry> {
+    fn capture_entry_once(&self, rel: &str, source: &Path, compress: bool) -> Result<Entry> {
         let before =
             fs::symlink_metadata(source).map_err(|e| Error::io("inspect source", source, e))?;
         if !before.is_file() || is_link(&before) {
@@ -684,7 +678,7 @@ impl Repository {
                 let size = chunk.len();
                 if size >= CHUNK_MIN && ((rolling & CHUNK_MASK) == 0 || size >= CHUNK_MAX) {
                     let id = blake3::hash(&chunk).to_hex().to_string();
-                    self.store_object(&id, &chunk)?;
+                    self.store_object(&id, &chunk, compress)?;
                     chunks.push(id);
                     chunk.clear();
                     rolling = 0;
@@ -693,7 +687,7 @@ impl Repository {
         }
         if !chunk.is_empty() {
             let id = blake3::hash(&chunk).to_hex().to_string();
-            self.store_object(&id, &chunk)?;
+            self.store_object(&id, &chunk, compress)?;
             chunks.push(id);
         }
         let entry = Entry {
@@ -708,7 +702,7 @@ impl Repository {
         let _ = formats::cache_embedded(self, &entry, &mut staged);
         Ok(entry)
     }
-    fn store_object(&self, id: &str, data: &[u8]) -> Result<()> {
+    fn store_object(&self, id: &str, data: &[u8], compress: bool) -> Result<()> {
         valid_id(id)?;
         if blake3::hash(data).to_hex().as_str() != id {
             return Err(Error::Corrupt(
@@ -716,6 +710,7 @@ impl Repository {
             ));
         }
         let d = self.metadata.join("objects").join(&id[..2]);
+        check_directory(&self.metadata.join("objects"))?;
         if !d.exists() {
             fs::create_dir(&d)
                 .or_else(|e| {
@@ -730,17 +725,19 @@ impl Repository {
         check_directory(&d)?;
         let p = d.join(id);
         match fs::symlink_metadata(&p) {
-            Ok(m) if !m.is_file() || is_link(&m) => {
-                return Err(Error::Corrupt(format!("unsafe stored object: {id}")))
-            }
             Ok(_) => {
-                if hash_file(&p)? != id {
-                    return Err(Error::Corrupt(format!("existing object is corrupt: {id}")));
-                }
+                objects::read(&p, id)?;
                 return Ok(());
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(Error::io("inspect stored object", &p, e)),
+        }
+        if compress {
+            let encoded =
+                objects::compress(data).map_err(|e| Error::io("compress stored object", &p, e))?;
+            if let Some(encoded) = encoded {
+                return atomic_write(&p, &encoded);
+            }
         }
         atomic_write(&p, data)
     }
@@ -1193,6 +1190,7 @@ fn gear(b: u8) -> u64 {
 }
 pub mod formats;
 pub mod index;
+mod objects;
 pub mod projects;
 pub mod restore;
 pub mod watcher;
@@ -1212,7 +1210,7 @@ mod tracking_tests {
         let initial = repo.history().unwrap().remove(0);
         let mut files = initial.files.clone();
         files.push(
-            repo.capture_entry(legacy, &repo.source_path(legacy).unwrap())
+            repo.capture_entry(legacy, &repo.source_path(legacy).unwrap(), false)
                 .unwrap(),
         );
         let archived = repo

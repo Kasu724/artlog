@@ -1,4 +1,4 @@
-use artlog_core::{Error, Kind, Repository};
+use artlog_core::{projects::Container, restore, Error, Kind, Repository};
 use std::{
     fs,
     io::{self, Write},
@@ -40,6 +40,59 @@ fn init_capture_reopen_deduplicate_and_reconstruct_exact_bytes() {
     assert!(!record.contains("\"files\""));
     assert_eq!(reopened.history().unwrap().len(), 3);
     assert_eq!(reopened.health().unwrap().versions, 3);
+}
+
+#[test]
+fn desktop_history_deduplicates_plaintext_across_codecs_and_restores_a_copy() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    let source = root.join("art.clip");
+    let first = vec![0x42; 100_000];
+    fs::write(&source, &first).unwrap();
+    let container = Container::create(root).unwrap();
+    let repo = container.open_or_create_single("art.clip").unwrap();
+    let baseline = repo.history().unwrap().remove(0);
+    let id = &baseline.files[0].chunks[0];
+    let object = repo.metadata().join("objects").join(&id[..2]).join(id);
+    assert!(fs::metadata(&object).unwrap().len() < 1000);
+
+    repo.set_history_compression(false).unwrap();
+    let checkpoint = repo
+        .capture(Kind::Checkpoint, "Same bytes", "Deduplicated")
+        .unwrap()
+        .unwrap();
+    assert_eq!(baseline.manifest_id, checkpoint.manifest_id);
+    assert_eq!(repo.health().unwrap().objects, 1);
+    assert!(fs::metadata(&object).unwrap().len() < 1000);
+
+    let second = vec![0x24; 100_000];
+    fs::write(&source, &second).unwrap();
+    let uncompressed = repo.capture(Kind::Auto, "", "").unwrap().unwrap();
+    let id = &uncompressed.files[0].chunks[0];
+    let object = repo.metadata().join("objects").join(&id[..2]).join(id);
+    assert_eq!(fs::read(&object).unwrap(), second);
+    drop(repo);
+
+    let reopened = container.open_or_create_single("art.clip").unwrap();
+    assert!(!reopened.history_compression().unwrap());
+    assert_eq!(reopened.health().unwrap().objects, 2);
+    let restored = root.join("restored.clip");
+    restore::as_copy(&reopened, &baseline.id, "art.clip", &restored).unwrap();
+    assert_eq!(fs::read(restored).unwrap(), first);
+    assert_eq!(fs::read(source).unwrap(), second);
+
+    let mut entry = baseline.files[0].clone();
+    entry.size -= 1;
+    assert!(matches!(
+        reopened.reconstruct(&entry, &mut io::sink()),
+        Err(Error::Corrupt(_))
+    ));
+    entry.size += 1;
+    entry.hash.clone_from(&uncompressed.files[0].hash);
+    assert!(matches!(
+        reopened.reconstruct(&entry, &mut io::sink()),
+        Err(Error::Corrupt(_))
+    ));
 }
 
 #[test]
