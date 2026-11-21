@@ -439,7 +439,7 @@ impl Repository {
         let mut length = 0u64;
         for cid in &entry.chunks {
             let path = safe_object_path(&self.metadata, cid)?;
-            let bytes = objects::read(&path, cid)?;
+            let bytes = objects::read(&path, cid)?.bytes;
             length = length
                 .checked_add(bytes.len() as u64)
                 .filter(|size| *size <= entry.size)
@@ -1191,6 +1191,7 @@ fn gear(b: u8) -> u64 {
 pub mod formats;
 pub mod index;
 mod objects;
+pub use objects::{RepackMode, RepackReport};
 pub mod projects;
 pub mod restore;
 pub mod watcher;

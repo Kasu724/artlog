@@ -1104,7 +1104,7 @@ fn ensure_dir(dir: &Path) -> Result<()> {
     }
 }
 
-fn children(path: &Path) -> Result<Vec<PathBuf>> {
+pub(super) fn children(path: &Path) -> Result<Vec<PathBuf>> {
     check_directory(path)?;
     let mut paths = fs::read_dir(path)
         .map_err(|e| Error::io("list ArtLog directory", path, e))?
@@ -1194,7 +1194,7 @@ fn remove_file(path: &Path) -> Result<()> {
     sync_parent(path)
 }
 
-fn sync_parent(path: &Path) -> Result<()> {
+pub(super) fn sync_parent(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         let parent = path
