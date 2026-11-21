@@ -66,9 +66,9 @@
   flex: none;
   margin-left: auto;
   padding: 0 8px;
-  border: 0;
+  border: 1px solid var(--control-border);
   border-radius: var(--radius);
-  background: transparent;
+  background: var(--inset);
   color: var(--text);
   font-size: 22px;
   line-height: 1.2;

@@ -141,15 +141,15 @@ button:disabled {
   gap: 9px;
   min-height: 38px;
   padding: 6px 9px;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: transparent;
+  background: var(--surface);
   color: var(--muted);
   text-align: left;
 }
 
 .nav-button:hover {
-  background: var(--surface);
+  background: var(--inset);
   color: var(--text);
 }
 
@@ -192,14 +192,14 @@ button:disabled {
   max-width: 100%;
   min-height: 34px;
   padding: 5px 8px;
-  border: 0;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: transparent;
+  background: var(--surface);
   color: var(--text);
 }
 
 .project-picker:hover:not(:disabled) {
-  background: var(--surface);
+  background: var(--inset);
 }
 
 .project-picker span {
@@ -374,23 +374,34 @@ button:disabled {
 }
 
 .text-button {
-  min-height: 28px;
-  padding: 3px 0;
-  border: 0;
-  background: transparent;
-  color: var(--purple);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
   font-size: 13px;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  font-weight: 600;
+  text-align: center;
 }
 
 .text-button:hover:not(:disabled) {
-  color: var(--focus);
+  border-color: var(--purple);
+  background: var(--purple-surface);
 }
 
 .text-button:disabled {
+  border-color: var(--border);
   color: var(--muted);
-  text-decoration: none;
+}
+
+.brand-button {
+  border-color: var(--border);
+  background: var(--inset);
 }
 .project-path {
   display: flex;
