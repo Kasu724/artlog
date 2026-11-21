@@ -5,14 +5,13 @@ import { artlog } from "../api";
 import type {
   CaptureStatus,
   ComparisonVersion,
-  FileLocation,
   FileVersion,
   ProjectFile,
+  ProjectSummary,
   ProjectView,
   RepositoryHealth,
   RestoreOutcome,
   ScanEntry,
-  ScanResult,
   Settings,
   TrashItem,
   ViewName,
@@ -26,12 +25,7 @@ import {
 } from "./ProjectSettings";
 import { HistoryTimeline, VersionDetail } from "./History";
 import { PreviewComparison } from "./PreviewComparison";
-import {
-  ProjectChoices,
-  TrackSetup,
-  Welcome,
-  type Setup,
-} from "./ProjectEntry";
+import { ProjectChoices, Welcome } from "./ProjectEntry";
 import {
   ConfirmationDialog,
   TrashView,
@@ -63,15 +57,10 @@ export default function App() {
   const [selectedFiles, setSelectedFiles] = useState<FileVersion[]>([]);
   const [workingFiles, setWorkingFiles] = useState<ScanEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
-  const [setup, setSetup] = useState<Setup | null>(null);
   const [launcher, setLauncher] = useState(false);
   const [folderChoice, setFolderChoice] = useState<{
     root: string;
-    scan: ScanResult;
-  } | null>(null);
-  const [fileChoice, setFileChoice] = useState<{
-    absolute: string;
-    location: FileLocation;
+    projects: ProjectSummary[];
   } | null>(null);
   const [trashRoot, setTrashRoot] = useState("");
   const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
@@ -190,9 +179,7 @@ export default function App() {
     setHistoryFile(null);
     setFileHistory(null);
     setWorkingFiles([]);
-    setSetup(null);
     setFolderChoice(null);
-    setFileChoice(null);
     setTrashRoot("");
     setLauncher(false);
     setView("history");
@@ -218,18 +205,8 @@ export default function App() {
     }
   }
 
-  const openFolder = (root: string, tracked: string[] | null) =>
-    activate(() => artlog.activateProject(root, tracked));
-
   const openInContainer = (root: string, id: string) =>
     activate(() => artlog.openContainerProject(root, id));
-
-  const setupFolder = (root: string, scan: ScanResult) =>
-    setSetup({
-      root,
-      files: scan.files,
-      tracked: scan.files.map((file) => file.path),
-    });
 
   async function chooseProject() {
     setError("");
@@ -237,18 +214,14 @@ export default function App() {
       const path = await open({
         directory: true,
         multiple: false,
-        title: "Choose an art project folder",
+        title: "Browse saved ArtLog histories",
       });
       if (typeof path !== "string") return;
       setBusy(true);
-      const scan = await artlog.scanProject(path);
-      if (scan.exists && (scan.projects?.length ?? 1) === 1) {
-        await openFolder(path, null);
-      } else if (scan.projects?.length) {
-        setFolderChoice({ root: path, scan });
-      } else {
-        setupFolder(path, scan);
-      }
+      setFolderChoice({
+        root: path,
+        projects: await artlog.listProjects(path),
+      });
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -266,12 +239,7 @@ export default function App() {
       });
       if (typeof absolute !== "string") return;
       setBusy(true);
-      const location = await artlog.inspectClip(absolute);
-      if (location.existing) {
-        await openInContainer(location.root, location.existing.id);
-      } else {
-        setFileChoice({ absolute, location });
-      }
+      await activate(() => artlog.openClip(absolute));
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -582,9 +550,7 @@ export default function App() {
       await artlog.closeProject();
       projectSnapshotRef.current = null;
       setProject(null);
-      setSetup(null);
       setFolderChoice(null);
-      setFileChoice(null);
       setTrashRoot("");
       setLauncher(false);
       setCapture(null);
@@ -611,6 +577,7 @@ export default function App() {
     setError("");
     try {
       const next = await operation();
+      projectSnapshotRef.current = next;
       setProject(next);
       setSettingsDraft(next.settings);
       setCapture(next.capture ?? null);
@@ -734,13 +701,7 @@ export default function App() {
       estimatedReclaim: kind === "purge" ? item.size : undefined,
     });
 
-  const atProject =
-    !!project &&
-    !setup &&
-    !launcher &&
-    !folderChoice &&
-    !fileChoice &&
-    !trashRoot;
+  const atProject = !!project && !launcher && !folderChoice && !trashRoot;
 
   const openRestore = (id: string, file: FileVersion) => {
     setError("");
@@ -879,62 +840,13 @@ export default function App() {
             onRestore={(item) => askTrash("restoreTrash", item)}
             onPurge={(item) => askTrash("purge", item)}
           />
-        ) : setup ? (
-          <TrackSetup
-            setup={setup}
-            busy={busy}
-            error={error}
-            onCancel={() => {
-              setSetup(null);
-              setError("");
-            }}
-            onToggle={(path) =>
-              setSetup((current) => {
-                if (!current) return current;
-                return {
-                  ...current,
-                  tracked: current.tracked.includes(path)
-                    ? current.tracked.filter((item) => item !== path)
-                    : [...current.tracked, path],
-                };
-              })
-            }
-            onSelectAll={(tracked) =>
-              setSetup((current) =>
-                current ? { ...current, tracked } : current,
-              )
-            }
-            onActivate={() => void openFolder(setup.root, setup.tracked)}
-          />
-        ) : fileChoice ? (
-          <ProjectChoices
-            root={fileChoice.location.root}
-            projects={fileChoice.location.folders}
-            file={fileChoice.location}
-            busy={busy}
-            error={error}
-            onOpen={(id) => void openInContainer(fileChoice.location.root, id)}
-            onCreate={() =>
-              void activate(() => artlog.openClip(fileChoice.absolute))
-            }
-            onTrash={() => void showTrash(fileChoice.location.root)}
-            onBack={() => {
-              setFileChoice(null);
-              setError("");
-            }}
-          />
         ) : folderChoice ? (
           <ProjectChoices
             root={folderChoice.root}
-            projects={folderChoice.scan.projects ?? []}
+            projects={folderChoice.projects}
             busy={busy}
             error={error}
             onOpen={(id) => void openInContainer(folderChoice.root, id)}
-            onCreate={
-              folderChoice.scan.exists
-                ? undefined
-                : () => setupFolder(folderChoice.root, folderChoice.scan)
-            }
             onTrash={() => void showTrash(folderChoice.root)}
             onBack={() => {
               setFolderChoice(null);

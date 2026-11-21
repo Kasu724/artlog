@@ -64,20 +64,6 @@ export type ProjectFile = {
   present: boolean;
 };
 
-export type ScanResult = {
-  exists: boolean;
-  files: ScanEntry[];
-  projects?: ProjectSummary[];
-};
-
-export type FileLocation = {
-  root: string;
-  path: string;
-  existing: ProjectSummary | null;
-  folders: ProjectSummary[];
-  shared: boolean;
-};
-
 export type TrashItem = {
   id: string;
   projectId: string;

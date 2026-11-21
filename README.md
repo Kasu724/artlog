@@ -12,9 +12,8 @@ has no outbound traffic when the device is connected.
 
 ## Use ArtLog
 
-1. Choose **Open a .clip file** to track one document where it is, or **Open a
-   project folder** and select the related documents you want on a shared
-   timeline. A file and folder project can track the same artwork independently.
+1. Choose **Open a .clip file** to start or reopen its version history. Use
+   **Browse saved histories** to find existing histories by folder.
 2. Keep editing in Clip Studio Paint. ArtLog captures stable saves on the **main**
    timeline and skips identical automatic snapshots. Use **New checkpoint** to
    name a milestone and add a note. Change tracking and save delay in Settings.
@@ -25,8 +24,7 @@ has no outbound traffic when the device is connected.
 
 ArtLog automatically reads the embedded canvas preview from each saved
 `.clip` version and shows a thumbnail in History. Existing versions generate
-their thumbnails when viewed. For checkpoints containing several files,
-History shows the first available `.clip` preview.
+their thumbnails when viewed.
 You can also attach a PNG or JPEG export, which takes priority over the
 embedded preview. Use **Restore as copy** to open and export an older version
 whose embedded preview is unavailable. Previews are flattened, scaled to at most
@@ -39,35 +37,36 @@ when previews are missing.
 
 - In **Files** or **Settings**, use **Stop tracking** to stop capturing future
   saves and keep earlier versions. Select the file again in Settings to resume
-  tracking. If you move or rename a working file, reopen its project and choose
-  **Link renamed file** to keep its history under the same identity.
-- Use **View file history** to see checkpoints and thumbnails for one file.
-  **Show project timeline** brings back the shared view.
+  tracking. After renaming a working file in the same folder, use **Browse
+  saved histories** to reopen its history and choose **Link renamed file** in
+  Files or Settings. ArtLog renames the history directory and keeps the same
+  checkpoints, notes, and previews.
 - **Delete file history** archives the pre-delete project, stops tracking the
-  selected file, and rewrites the active timeline without its saved versions.
+  selected file, and removes its saved versions from the active timeline.
   The rewrite can change checkpoint IDs. **Remove project** in Settings sends
-  that project's history and settings to ArtLog trash. Both actions leave
-  working artwork in place.
+  that file's history and settings to ArtLog trash. Both actions leave working
+  artwork in place.
 - Open **ArtLog trash** from Settings or browse it by folder from the welcome
   screen. **Restore from trash** recovers the archived project. If the active
-  project has changed since a file deletion, recovery creates a separate
-  project. **Permanently delete** erases the selected archive after a separate
-  typed confirmation. ArtLog keeps trash until you restore or permanently
-  delete it.
+  project has changed since a file deletion, recovery opens a separate
+  read-only history. **Permanently delete** erases the selected archive after
+  a separate typed confirmation. ArtLog keeps trash until you restore or
+  permanently delete it.
 
 ## Backup and recovery
 
-ArtLog upgrades earlier folder projects on open. It stages and verifies the new
-layout before retiring the old metadata, preserving checkpoint IDs and source
-artwork. Reopen the location to resume an interrupted upgrade or history move.
-If an upgrade needs attention, ArtLog can open readable history for restoring
-copies while capture is paused. Earlier snapshots of other file types remain
-available through **Restore as copy**.
+ArtLog upgrades earlier individual histories to filename-based directories.
+Use **Browse saved histories** to access old shared folder timelines. They
+remain available for browsing and restoring copies, including copies of
+historical file types. Reopen the location to resume an interrupted upgrade
+or history move.
 
 Copy the entire project folder, including **`.artlog/`**, while ArtLog and
-the art app are closed. Each project has its own directory under
-`.artlog/projects/`, with per-file records and preview caches under `files/`.
-Content objects are reused across files and versions within that project.
+the art app are closed. All tracked files in that folder share one
+`.artlog/` container. A file named `Cover.clip` normally stores its history
+in `.artlog/projects/Cover.clip/`. ArtLog can keep a history in its existing
+directory if the preferred name is occupied. Content objects are reused
+across versions of the same file.
 `.artlog/trash/` travels with the folder too. The SQLite index in your local
 application data can be rebuilt from the portable history. Settings includes
 a health check. An upgrade, history rewrite, or trash restore needs room for
@@ -118,7 +117,7 @@ ArtLog targets local disks on Windows and macOS. In-place restore works one
 file at a time and requires a filesystem with hard links (such as NTFS or
 APFS). Use a copy for removable drives, network shares, or other filesystems.
 Branches, merges, and cloud sync are outside this release. ArtLog
-upgrades format 1 to the format 2 container and rejects unknown format
+upgrades older histories to the format 3 container and rejects unknown format
 versions. ArtLog is independent of CELSYS.
 
 ArtLog is licensed under the [MIT License](LICENSE). Desktop packages include

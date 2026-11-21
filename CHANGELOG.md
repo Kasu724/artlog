@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- Open a single `.clip` directly or select related files for a shared folder
-  project. Both project types can coexist in the same folder.
-- Keep stable file identities, file-specific history and previews, and
-  project-local chunk reuse. Upgrade earlier projects while preserving their
-  checkpoint IDs.
+- Track individual `.clip` files. Browse and restore copies from existing
+  shared folder timelines.
+- Store each tracked file's history under its filename in `.artlog/projects/`.
+  Relinking a renamed file updates the directory name and preserves its history.
+  Existing individual histories adopt the new layout.
 - Stop tracking a file, delete its active history, or remove a project.
   Recover archives from ArtLog trash or permanently delete them with a
   separate confirmation.

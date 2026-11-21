@@ -1,112 +1,6 @@
-import type { FileLocation, ProjectSummary, ScanEntry } from "../types";
-import { formatBytes } from "./format";
+import type { ProjectSummary } from "../types";
 import { Icon } from "./Icon";
 import "./project-entry.css";
-
-export type Setup = { root: string; files: ScanEntry[]; tracked: string[] };
-
-export function TrackSetup({
-  setup,
-  busy,
-  error,
-  onToggle,
-  onSelectAll,
-  onCancel,
-  onActivate,
-}: {
-  setup: Setup;
-  busy: boolean;
-  error: string;
-  onToggle: (path: string) => void;
-  onSelectAll: (paths: string[]) => void;
-  onCancel: () => void;
-  onActivate: () => void;
-}) {
-  const allSelected =
-    setup.files.length > 0 && setup.tracked.length === setup.files.length;
-  return (
-    <section className="setup-view">
-      <button className="text-button back-button" onClick={onCancel}>
-        <span aria-hidden="true">←</span> Back
-      </button>
-      <h1>Set up project</h1>
-      <p className="project-path" title={setup.root}>
-        <Icon name="folder" /> <span>{setup.root}</span>
-      </p>
-
-      <section className="setup-card" aria-labelledby="track-heading">
-        <div className="section-heading">
-          <h2 id="track-heading">Files to track</h2>
-          {setup.files.length > 0 && (
-            <button
-              className="text-button setup-select-all"
-              onClick={() =>
-                onSelectAll(
-                  allSelected ? [] : setup.files.map((file) => file.path),
-                )
-              }
-            >
-              {allSelected ? "Clear all" : "Select all"}
-            </button>
-          )}
-        </div>
-        <div className="entry-file-list">
-          {setup.files.length === 0 ? (
-            <div className="entry-empty">
-              <Icon name="file" />
-              <div>
-                <strong>No .clip files found</strong>
-                <p>
-                  You can create this project now and add Clip Studio Paint
-                  files later.
-                </p>
-              </div>
-            </div>
-          ) : (
-            setup.files.map((file) => (
-              <label
-                className="entry-file-row"
-                key={file.path}
-                title={file.path}
-              >
-                <input
-                  aria-label={file.path}
-                  type="checkbox"
-                  checked={setup.tracked.includes(file.path)}
-                  onChange={() => onToggle(file.path)}
-                />
-                <Icon name="file" />
-                <span className="entry-file-name">{file.path}</span>
-                <span className="entry-file-type">CLIP</span>
-                <span className="entry-file-size">
-                  {formatBytes(file.size)}
-                </span>
-              </label>
-            ))
-          )}
-        </div>
-        <div className="setup-foot">
-          <span>{setup.tracked.length} selected</span>
-          <button
-            className="primary-button"
-            disabled={busy}
-            onClick={onActivate}
-          >
-            <span>{busy ? "Creating project…" : "Create project"}</span>
-          </button>
-        </div>
-      </section>
-      {error && (
-        <p className="error-message" role="alert">
-          {error}
-        </p>
-      )}
-      <p className="setup-privacy">
-        <Icon name="device" /> History is stored in this folder.
-      </p>
-    </section>
-  );
-}
 
 export function Welcome({
   busy,
@@ -158,11 +52,11 @@ export function Welcome({
           <Icon name="file" /> Open a .clip file
         </button>
         <button
-          className="secondary-button welcome-action"
+          className="text-button"
           onClick={onChooseProject}
           disabled={busy}
         >
-          <Icon name="folder" /> Open a project folder
+          <Icon name="folder" /> Browse saved histories
         </button>
         <button className="text-button" onClick={onChooseTrash} disabled={busy}>
           Browse ArtLog trash
@@ -183,26 +77,22 @@ export function Welcome({
 export function ProjectChoices({
   root,
   projects,
-  file,
   busy,
   error,
   onOpen,
-  onCreate,
   onTrash,
   onBack,
 }: {
   root: string;
   projects: ProjectSummary[];
-  file?: FileLocation;
   busy: boolean;
   error: string;
   onOpen: (id: string) => void;
-  onCreate?: () => void;
   onTrash: () => void;
   onBack: () => void;
 }) {
   return (
-    <section className="setup-view">
+    <section className="saved-histories">
       <button
         className="text-button back-button"
         onClick={onBack}
@@ -210,19 +100,11 @@ export function ProjectChoices({
       >
         <span aria-hidden="true">←</span> Back
       </button>
-      <h1>{file ? "Open a .clip file" : "Projects in this folder"}</h1>
+      <h1>Saved ArtLog histories</h1>
       <p className="project-path" title={root}>
         <Icon name="folder" /> <span>{root}</span>
       </p>
-      {file && (
-        <p>
-          ArtLog will track <strong>{file.path}</strong> where it is.{" "}
-          {file.shared
-            ? "A folder project already tracks this file. The projects will observe the same artwork and have independent histories."
-            : "This file will have its own timeline."}
-        </p>
-      )}
-      {projects.length > 0 && (
+      {projects.length > 0 ? (
         <ul className="project-choices">
           {projects.map((item) => (
             <li key={item.id}>
@@ -236,21 +118,24 @@ export function ProjectChoices({
                 <span className="muted-caption">
                   {item.mode === "folder"
                     ? item.recovered
-                      ? "Recovered project"
-                      : "Folder project"
+                      ? "Recovered history · read only"
+                      : "Historical folder project · read only"
                     : "Single-file project"}
                 </span>
               </button>
             </li>
           ))}
         </ul>
+      ) : (
+        <div className="entry-empty">
+          <Icon name="history" />
+          <div>
+            <strong>No saved histories in this folder</strong>
+            <p>Choose a folder containing an existing ArtLog history.</p>
+          </div>
+        </div>
       )}
       <div className="project-choice-actions">
-        {onCreate && (
-          <button className="primary-button" disabled={busy} onClick={onCreate}>
-            {file ? "Open as a single-file project" : "Set up folder project"}
-          </button>
-        )}
         <button className="text-button" onClick={onTrash} disabled={busy}>
           View ArtLog trash
         </button>

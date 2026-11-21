@@ -40,7 +40,12 @@ impl Deref for Opened {
 
 impl Opened {
     fn new(repo: Repository, app: &AppHandle) -> Reply<Self> {
-        Self::with_warning(repo, app, None)
+        let summary = projects::describes(&repo).map_err(message)?;
+        let warning = (summary.mode == Mode::Folder).then(|| {
+            "This saved history is read-only. You can browse checkpoints and restore copies."
+                .to_owned()
+        });
+        Self::with_warning(repo, app, warning)
     }
 
     fn with_warning(
@@ -58,10 +63,7 @@ impl Opened {
         );
         let settings = repo.settings().map_err(message)?;
         let initial = if open_warning.is_some() {
-            (
-                WatchState::Paused,
-                "Reopen this folder to retry the history upgrade.",
-            )
+            (WatchState::Paused, "Capture is paused.")
         } else if !repo.recovery_paths().map_err(message)?.is_empty() {
             (
                 WatchState::Paused,
@@ -145,14 +147,6 @@ impl Opened {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Scan {
-    exists: bool,
-    files: Vec<ScanEntry>,
-    projects: Vec<Summary>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct Version {
     id: String,
     parent: Option<String>,
@@ -225,16 +219,6 @@ pub(crate) struct ComparisonVersion {
     path: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct FileLocation {
-    root: String,
-    path: String,
-    existing: Option<Summary>,
-    folders: Vec<Summary>,
-    shared: bool,
-}
-
 fn message(err: impl std::fmt::Display) -> String {
     err.to_string()
 }
@@ -279,6 +263,7 @@ async fn on_project<T: Send + 'static>(
 }
 
 fn view(repo: &Opened, app: &AppHandle) -> Reply<ProjectView> {
+    let _read = repo.with_read_lock().map_err(message)?;
     let history = repo.history().map_err(message)?;
     let summary = projects::describes(repo).map_err(message)?;
     let files = projects::files(repo, &history).map_err(message)?;
@@ -304,64 +289,21 @@ fn view(repo: &Opened, app: &AppHandle) -> Reply<ProjectView> {
 }
 
 #[tauri::command]
-pub(crate) async fn scan_project(root: String) -> Reply<Scan> {
+pub(crate) async fn list_projects(root: String) -> Reply<Vec<Summary>> {
     background(move || {
         let root = PathBuf::from(root);
         if !root.is_absolute() || !root.is_dir() {
             return Err("Choose a folder on this computer.".into());
         }
-        let projects = match Container::discover(&root) {
-            Ok(Some(container)) => container.list().map_err(message)?,
-            Ok(None) => Vec::new(),
-            Err(error) => match projects::readable_during_migration(&root) {
-                Ok(repo) => vec![projects::describes(&repo).map_err(message)?],
-                Err(_) => return Err(message(error)),
-            },
-        };
-        let exists = projects
-            .iter()
-            .any(|project| project.mode == Mode::Folder && !project.recovered);
-        let files = if exists {
-            Vec::new()
-        } else {
-            Repository::scan(&root).map_err(message)?
-        };
-        Ok(Scan {
-            exists,
-            files,
-            projects,
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn activate_project(
-    app: AppHandle,
-    state: State<'_, Desktop>,
-    root: String,
-    tracked: Option<Vec<String>>,
-) -> Reply<ProjectView> {
-    let desktop = state.inner().clone();
-    background(move || {
-        let mut active = desktop.0.lock().map_err(message)?;
-        let root = PathBuf::from(root);
-        if !root.is_absolute() {
-            return Err("Choose a folder on this computer.".into());
+        match Container::discover(&root) {
+            Ok(Some(container)) => container.list().map_err(message),
+            Ok(None) => Ok(Vec::new()),
+            Err(error) => {
+                let repo =
+                    projects::readable_during_migration(&root).map_err(|_| message(error))?;
+                Ok(vec![projects::describes(&repo).map_err(message)?])
+            }
         }
-        let project = match tracked {
-            Some(paths) => Opened::new(
-                Container::create(&root)
-                    .and_then(|c| c.create_folder(paths))
-                    .map_err(message)?,
-                &app,
-            )?,
-            None => match projects::open_folder(&root) {
-                Ok(repo) => Opened::new(repo, &app)?,
-                Err(error) => legacy_fallback(&root, error, &app)?,
-            },
-        };
-        replace_active(&mut active, project, &app)
     })
     .await
 }
@@ -379,53 +321,10 @@ fn replace_active(
     Ok(view)
 }
 
-fn legacy_fallback(root: &Path, error: artlog_core::Error, app: &AppHandle) -> Reply<Opened> {
-    let legacy = projects::readable_during_migration(root).map_err(|_| message(&error))?;
-    Opened::with_warning(legacy, app, Some(format!("ArtLog could not upgrade this folder. Its saved history is available as copies. Reopen the folder to retry. {error}")))
-}
-
 fn project_container(root: &Path) -> Reply<Container> {
     Container::discover(root)
         .map_err(message)?
         .ok_or_else(|| "No ArtLog history was found in this folder.".to_owned())
-}
-
-#[tauri::command]
-pub(crate) async fn inspect_clip(path: String) -> Reply<FileLocation> {
-    background(move || {
-        let (root, path) = projects::selected_file(Path::new(&path)).map_err(message)?;
-        let mut existing = None;
-        let mut folders = Vec::new();
-        let mut shared = false;
-        if let Some(container) = Container::discover(&root).map_err(message)? {
-            for item in container.list().map_err(message)? {
-                match item.mode {
-                    Mode::Folder => {
-                        let repo = container.open(&item.id).map_err(message)?;
-                        shared |= repo.settings().map_err(message)?.tracked.contains(&path);
-                        folders.push(item);
-                    }
-                    Mode::SingleFile
-                        if item
-                            .path
-                            .as_ref()
-                            .is_some_and(|item| projects::same_path(item, &path)) =>
-                    {
-                        existing = Some(item)
-                    }
-                    Mode::SingleFile => (),
-                }
-            }
-        }
-        Ok(FileLocation {
-            root: display(&root),
-            path,
-            existing,
-            folders,
-            shared,
-        })
-    })
-    .await
 }
 
 #[tauri::command]
@@ -497,6 +396,7 @@ pub(crate) async fn project_state(
     project_id: String,
 ) -> Reply<ProjectState> {
     on_project(state, project_id, |repo| {
+        let _read = repo.with_read_lock().map_err(message)?;
         Ok(ProjectState {
             head: repo.head().map_err(message)?,
             capture: repo.capture.lock().map_err(message)?.clone(),
@@ -511,6 +411,7 @@ pub(crate) async fn project_files(
     project_id: String,
 ) -> Reply<Vec<ScanEntry>> {
     on_project(state, project_id, |repo| {
+        let _read = repo.with_read_lock().map_err(message)?;
         projects::scan_project_files(repo).map_err(message)
     })
     .await
@@ -523,6 +424,7 @@ pub(crate) async fn list_commit_files(
     id: String,
 ) -> Reply<Vec<VersionFile>> {
     on_project(state, project_id, move |repo| {
+        let _read = repo.with_read_lock().map_err(message)?;
         Ok(repo
             .commit(&id)
             .map_err(message)?
@@ -617,7 +519,11 @@ pub(crate) async fn repository_health(
     state: State<'_, Desktop>,
     project_id: String,
 ) -> Reply<Health> {
-    on_project(state, project_id, |repo| repo.health().map_err(message)).await
+    on_project(state, project_id, |repo| {
+        let _read = repo.with_read_lock().map_err(message)?;
+        repo.health().map_err(message)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -658,6 +564,7 @@ pub(crate) async fn comparison_versions(
     file_id: Option<String>,
 ) -> Reply<Vec<ComparisonVersion>> {
     on_project(state, project_id, move |repo| {
+        let _read = repo.with_read_lock().map_err(message)?;
         Ok(repo
             .history()
             .map_err(message)?
@@ -718,31 +625,23 @@ pub(crate) async fn relink_file(
     file_id: String,
     destination: String,
 ) -> Reply<ProjectView> {
-    on_project(state, project_id, move |repo| {
-        repo.writable()?;
-        let destination = Path::new(&destination);
-        if !destination.is_absolute() {
-            return Err("Choose a .clip file in the project folder.".into());
+    let desktop = state.inner().clone();
+    background(move || {
+        let mut active = desktop.0.lock().map_err(message)?;
+        let project = active_mut(&mut active, &project_id)?;
+        project.writable()?;
+        let (root, path) = projects::selected_file(Path::new(&destination)).map_err(message)?;
+        if root != project.root() {
+            return Err("Choose a .clip file in the original folder.".into());
         }
-        let canonical = destination.canonicalize().map_err(message)?;
-        let relative = canonical
-            .strip_prefix(repo.root())
-            .map_err(|_| "Choose a .clip file in the project folder.")?;
-        let path = relative
-            .to_str()
-            .ok_or("The selected path is not valid Unicode.")?
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        if destination
-            .symlink_metadata()
-            .map_err(message)?
-            .file_type()
-            .is_symlink()
-        {
-            return Err("Choose the original file and its direct path.".into());
+        project.stop_watcher();
+        match projects::relink_file(project, &file_id, &path) {
+            Ok(repo) => replace_active(&mut active, Opened::new(repo, &app)?, &app),
+            Err(error) => {
+                project.start_watcher(&app);
+                Err(message(error))
+            }
         }
-        projects::relink_file(repo, &file_id, &path).map_err(message)?;
-        repo.rescan();
-        view(repo, &app)
     })
     .await
 }

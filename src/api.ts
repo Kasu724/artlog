@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CommitThumbnail,
   ComparisonVersion,
-  FileLocation,
   FileVersion,
   Preview,
   ProjectView,
@@ -10,16 +9,14 @@ import type {
   RepositoryHealth,
   RestoreOutcome,
   ScanEntry,
-  ScanResult,
+  ProjectSummary,
   Settings,
   TrashItem,
 } from "./types";
 
 export const artlog = {
-  scanProject: (root: string) => invoke<ScanResult>("scan_project", { root }),
-  activateProject: (root: string, tracked: string[] | null) =>
-    invoke<ProjectView>("activate_project", { root, tracked }),
-  inspectClip: (path: string) => invoke<FileLocation>("inspect_clip", { path }),
+  listProjects: (root: string) =>
+    invoke<ProjectSummary[]>("list_projects", { root }),
   openClip: (path: string) => invoke<ProjectView>("open_clip", { path }),
   openContainerProject: (root: string, id: string) =>
     invoke<ProjectView>("open_container_project", { root, id }),

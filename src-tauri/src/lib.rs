@@ -6,9 +6,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::Desktop::default())
         .invoke_handler(tauri::generate_handler![
-            commands::scan_project,
-            commands::activate_project,
-            commands::inspect_clip,
+            commands::list_projects,
             commands::open_clip,
             commands::open_container_project,
             commands::close_project,
