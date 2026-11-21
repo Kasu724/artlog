@@ -98,6 +98,8 @@ export function PreviewComparison({
   path,
   fileId,
   onPreviewChange,
+  onTimelinePickerChange,
+  timelinePick,
 }: {
   projectId: string;
   currentCommit: CommitSummary;
@@ -105,6 +107,8 @@ export function PreviewComparison({
   path: string;
   fileId?: string | null;
   onPreviewChange?: () => void;
+  onTimelinePickerChange: (eligibleIds: string[] | null) => void;
+  timelinePick: { id: string } | null;
 }) {
   const current = usePreview(projectId, currentCommit.id, path);
   const [selection, setSelection] = useState<{
@@ -113,6 +117,7 @@ export function PreviewComparison({
   } | null>(null);
   const compareId = selection?.id ?? "";
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerArmed, setPickerArmed] = useState(false);
   const [candidates, setCandidates] = useState<
     (CommitSummary & { path: string })[] | null
   >(null);
@@ -147,6 +152,23 @@ export function PreviewComparison({
   >("idle");
   const [differenceError, setDifferenceError] = useState("");
   const [attachError, setAttachError] = useState("");
+  const disarmPicker = useCallback(() => {
+    setPickerArmed(false);
+    onTimelinePickerChange(null);
+  }, [onTimelinePickerChange]);
+
+  const chooseVersion = useCallback(
+    (candidate: { id: string; path: string } | null) => {
+      setSelection(candidate);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      setMode("side");
+      setDifference(null);
+      setDifferenceState("idle");
+      disarmPicker();
+    },
+    [disarmPicker],
+  );
 
   const sameDimensions =
     current.result.state === "ready" &&
@@ -160,8 +182,9 @@ export function PreviewComparison({
     current.result.state === "ready" || comparison.result.state === "ready";
 
   useEffect(() => {
-    if (!pickerOpen || candidates !== null) return;
+    if (!pickerOpen) return;
     let active = true;
+    setCandidates(null);
     setCandidateState("loading");
     setCandidateError("");
     void artlog
@@ -188,7 +211,6 @@ export function PreviewComparison({
     };
   }, [
     pickerOpen,
-    candidates,
     commits,
     currentCommit.id,
     projectId,
@@ -198,12 +220,34 @@ export function PreviewComparison({
   ]);
 
   useEffect(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-    setMode("side");
-    setDifference(null);
-    setDifferenceState("idle");
-  }, [compareId, path, currentCommit.id]);
+    if (!pickerArmed) return;
+    onTimelinePickerChange(candidates?.map(({ id }) => id) ?? []);
+  }, [pickerArmed, candidates, onTimelinePickerChange]);
+
+  useEffect(() => {
+    if (!pickerArmed) return;
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        (event.target instanceof Element &&
+          event.target.closest("dialog[open]"))
+      )
+        return;
+      event.preventDefault();
+      disarmPicker();
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+  }, [pickerArmed, disarmPicker]);
+
+  useEffect(() => () => onTimelinePickerChange(null), [onTimelinePickerChange]);
+
+  useEffect(() => {
+    if (!timelinePick) return;
+    const candidate = candidates?.find(({ id }) => id === timelinePick.id);
+    if (candidate) chooseVersion(candidate);
+  }, [timelinePick, candidates, chooseVersion]);
 
   useEffect(() => {
     if (
@@ -269,7 +313,7 @@ export function PreviewComparison({
       Math.max(1, Math.min(5, Number((value + amount).toFixed(2)))),
     );
   }
-  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+  function onKeyDown(event: React.KeyboardEvent<HTMLElement>) {
     if (event.key === "+" || event.key === "=") {
       event.preventDefault();
       zoomBy(0.15);
@@ -326,9 +370,27 @@ export function PreviewComparison({
       zoomBy(event.deltaY < 0 ? 0.1 : -0.1);
     }
   }
+  function toggleTimelinePicker() {
+    if (pickerArmed) {
+      disarmPicker();
+    } else {
+      setPickerOpen(true);
+      setPickerArmed(true);
+    }
+  }
 
   return (
-    <section className="compare-panel" aria-label="Preview comparison">
+    <section
+      className="compare-panel"
+      aria-label="Preview comparison"
+      onKeyDownCapture={(event) => {
+        if (event.key !== "Escape" || (!pickerArmed && !pickerOpen)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (pickerArmed) disarmPicker();
+        else setPickerOpen(false);
+      }}
+    >
       <div className="section-heading compare-heading">
         <h3>Compare versions</h3>
         <button
@@ -336,7 +398,9 @@ export function PreviewComparison({
           disabled={!path}
           aria-expanded={pickerOpen}
           onClick={() => {
-            setPickerOpen((value) => !value);
+            const opening = !pickerOpen;
+            setPickerOpen(opening);
+            if (!opening) disarmPicker();
             setCandidateState("idle");
             setCandidates(null);
             setCandidateError("");
@@ -345,60 +409,6 @@ export function PreviewComparison({
           {pickerOpen ? "Close compare" : "Compare with another version…"}
         </button>
       </div>
-      {pickerOpen && (
-        <div className="compare-picker">
-          {candidateState === "loading" ? (
-            <span className="muted-caption">
-              Finding versions containing this file…
-            </span>
-          ) : candidateState === "error" ? (
-            <div className="compare-error" role="alert">
-              {candidateError}
-              <button
-                className="text-button"
-                onClick={() => {
-                  setCandidates(null);
-                  setCandidateState("idle");
-                  setCandidateRetry((value) => value + 1);
-                }}
-              >
-                Retry
-              </button>
-            </div>
-          ) : candidates?.length ? (
-            <label>
-              Compare <span className="sr-only">{path}</span> with
-              <select
-                aria-label="Compare with version"
-                value={compareId}
-                onChange={(event) => {
-                  setSelection(
-                    candidates.find(
-                      (commit) => commit.id === event.target.value,
-                    ) ?? null,
-                  );
-                  resetView();
-                }}
-              >
-                <option value="">Choose an earlier version</option>
-                {candidates.map((commit) => (
-                  <option key={commit.id} value={commit.id}>
-                    {commit.title} · {formatDate(commit.timestamp).day}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : candidateState === "ready" ? (
-            <span className="muted-caption">
-              No other version contains {path}.
-            </span>
-          ) : (
-            <span className="muted-caption">
-              Choose a version of this file to compare.
-            </span>
-          )}
-        </div>
-      )}
       {comparisonCommit && (
         <div className="preview-controls-row">
           {current.result.state === "ready" &&
@@ -468,6 +478,61 @@ export function PreviewComparison({
           />
           <span>{opacity}%</span>
         </label>
+      )}
+      {pickerOpen && (
+        <div className="compare-picker-columns">
+          <div className="compare-picker">
+            {candidateState === "loading" ? (
+              <span className="muted-caption">
+                Finding versions containing this file…
+              </span>
+            ) : candidateState === "error" ? (
+              <div className="compare-error" role="alert">
+                {candidateError}
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setCandidates(null);
+                    setCandidateState("idle");
+                    setCandidateRetry((value) => value + 1);
+                  }}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : candidates?.length ? (
+              <label>
+                Previous version
+                <select
+                  aria-label="Compare with version"
+                  value={compareId}
+                  onChange={(event) => {
+                    const candidate = candidates.find(
+                      ({ id }) => id === event.target.value,
+                    );
+                    chooseVersion(candidate ?? null);
+                  }}
+                >
+                  <option value="">Choose an earlier version</option>
+                  {candidates.map((commit) => (
+                    <option key={commit.id} value={commit.id}>
+                      {commit.title} · {formatDate(commit.timestamp).day}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : candidateState === "ready" ? (
+              <span className="muted-caption">
+                No other version contains {path}.
+              </span>
+            ) : (
+              <span className="muted-caption">
+                Choose a version of this file to compare.
+              </span>
+            )}
+          </div>
+          <div aria-hidden="true" />
+        </div>
       )}
       {showsCombinedPreview && (
         <div className="compare-version-labels">
@@ -541,7 +606,7 @@ export function PreviewComparison({
       ) : (
         <div className="compare-slots">
           <PreviewPane
-            label="Earlier version"
+            label="Previous version"
             path={path}
             commit={comparisonCommit}
             state={comparison.result}
@@ -558,6 +623,8 @@ export function PreviewComparison({
             onPointerMove={pointerMove}
             onPointerUp={pointerUp}
             onWheel={wheel}
+            pickerArmed={pickerArmed}
+            onPick={toggleTimelinePicker}
           />
           <PreviewPane
             label="Selected version"
@@ -627,6 +694,8 @@ function PreviewPane({
   onPointerMove,
   onPointerUp,
   onWheel,
+  pickerArmed,
+  onPick,
 }: {
   label: string;
   path: string;
@@ -637,12 +706,17 @@ function PreviewPane({
   onAttach: () => void;
   zoom: number;
   pan: { x: number; y: number };
-  onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerUp: () => void;
   onWheel: (event: React.WheelEvent<HTMLDivElement>) => void;
+  pickerArmed?: boolean;
+  onPick?: () => void;
 }) {
+  const pointer = useRef<{ x: number; y: number; dragged: boolean } | null>(
+    null,
+  );
   const adapterNote =
     state.state === "ready"
       ? state.preview.adapter === "clip"
@@ -650,12 +724,56 @@ function PreviewPane({
         : `Artist-provided PNG/JPEG export · approximate visual reference · ${state.preview.width} × ${state.preview.height}`
       : "";
   return (
-    <div className="preview-pane">
+    <div
+      className={`preview-pane${onPick ? " comparison-target" : ""}${pickerArmed ? " timeline-picker-armed" : ""}`}
+      onPointerDownCapture={(event) => {
+        if (onPick)
+          pointer.current = {
+            x: event.clientX,
+            y: event.clientY,
+            dragged: false,
+          };
+      }}
+      onPointerMoveCapture={(event) => {
+        const start = pointer.current;
+        if (
+          start &&
+          Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5
+        ) {
+          start.dragged = true;
+        }
+      }}
+      onClick={(event) => {
+        if (
+          !onPick ||
+          pointer.current?.dragged ||
+          (event.target instanceof Element && event.target.closest("button"))
+        )
+          return;
+        onPick();
+      }}
+    >
       <span className="preview-card-label" title={commit?.title}>
         {label}
         {commit && <small>{commit.title}</small>}
       </span>
-      {loading ? (
+      {pickerArmed && (
+        <p className="timeline-picker-hint" role="status">
+          Choose a checkpoint in History.
+        </p>
+      )}
+      {!commit && onPick ? (
+        <button
+          className="preview-state preview-timeline-target"
+          type="button"
+          aria-label="Choose previous version from timeline"
+          aria-pressed={!!pickerArmed}
+          onClick={onPick}
+        >
+          <Icon name="history" />
+          {pickerArmed ? "Cancel timeline selection" : "Choose from History"}
+        </button>
+      ) : loading ? (
         <div className="preview-state" role="status">
           Loading preview…
         </div>
@@ -719,6 +837,16 @@ function PreviewPane({
         >
           {adapterNote}
         </span>
+      )}
+      {commit && onPick && (
+        <button
+          className="text-button preview-timeline-action"
+          type="button"
+          aria-pressed={!!pickerArmed}
+          onClick={onPick}
+        >
+          {pickerArmed ? "Cancel timeline selection" : "Choose from History"}
+        </button>
       )}
       {commit &&
         !loading &&

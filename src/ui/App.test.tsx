@@ -139,6 +139,7 @@ async function openExistingProject() {
 
 describe("ArtLog desktop workflows", () => {
   beforeEach(() => {
+    localStorage.clear();
     invokeMock.mockReset();
     openMock.mockReset();
     saveMock.mockReset();
@@ -150,7 +151,35 @@ describe("ArtLog desktop workflows", () => {
     expect(
       screen.getByRole("button", { name: /browse saved histories/i }),
     ).toBeTruthy();
-    expect(screen.getByText(/stored on this device/i)).toBeTruthy();
+    expect(
+      screen.getByText(/projects you open will appear here/i),
+    ).toBeVisible();
+    expect(screen.queryByText(/stored on this device/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /trash/i })).toBeNull();
+  });
+
+  it("reopens a recent project from the sidebar after an app reload", async () => {
+    const app = render(<App />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /browse saved histories/i }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /moss study/i }));
+    await screen.findByRole("heading", { name: "moss study" });
+    app.unmount();
+
+    openMock.mockClear();
+    invokeMock.mockClear();
+    render(<App />);
+    const sidebar = screen.getByRole("region", { name: "Recently opened" });
+    fireEvent.click(
+      within(sidebar).getByRole("button", { name: "moss study" }),
+    );
+    await screen.findByRole("heading", { name: "moss study" });
+    expect(invokeMock).toHaveBeenCalledWith("open_container_project", {
+      root: "C:\\art\\moss study",
+      id: "repository-1",
+    });
+    expect(openMock).not.toHaveBeenCalled();
   });
 
   it("opens an existing history and shows its main timeline", async () => {
@@ -659,6 +688,41 @@ describe("ArtLog desktop workflows", () => {
     expect(screen.getByText("115%")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Reset zoom and pan" }));
     expect(screen.getByText("100%")).toBeTruthy();
+  });
+
+  it("uses a timeline click for the previous preview without changing the selected checkpoint", async () => {
+    await openExistingProject();
+    const timeline = screen.getByRole("region", { name: "Version timeline" });
+    const current = within(timeline).getByRole("button", {
+      name: /softened the background/i,
+    });
+    const previous = within(timeline).getByRole("button", {
+      name: /project created/i,
+    });
+    const slot = await screen.findByRole("button", {
+      name: "Choose previous version from timeline",
+    });
+    fireEvent.click(slot);
+    const selector = await screen.findByRole("combobox", {
+      name: /compare with version/i,
+    });
+    expect(
+      selector.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(current).toBeDisabled();
+    expect(slot).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(previous).toBeEnabled());
+    fireEvent.click(previous);
+
+    await waitFor(() => expect(selector).toHaveValue("v1"));
+    expect(current).toHaveAttribute("aria-pressed", "true");
+    expect(previous).toHaveAttribute("aria-pressed", "false");
+    expect(current).toBeEnabled();
+    expect(invokeMock).toHaveBeenCalledWith("get_preview", {
+      projectId: "project-1",
+      id: "v1",
+      path: "painting.clip",
+    });
   });
 
   it("requires confirmation before in-place replacement and reports the safety snapshot", async () => {

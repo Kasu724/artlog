@@ -80,18 +80,6 @@
   gap: 12px;
   margin-top: 24px;
 }
-.compatibility {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 22px 0 0;
-  color: var(--muted);
-  font-size: 14px;
-}
-.compatibility .icon {
-  width: 22px;
-  height: 22px;
-}
 .welcome-error {
   width: min(440px, 100%);
   text-align: left;
@@ -107,7 +95,7 @@
   align-items: center;
   gap: 10px;
   margin: 0 0 24px;
-  padding: 3px 0;
+  padding-block: 3px;
 }
 .back-button > span {
   font-size: 20px;
@@ -142,6 +130,63 @@
   margin-top: 14px;
 }
 
+/* The welcome rail stays useful at narrower desktop widths without squeezing
+   the primary welcome actions. */
+.home-rail {
+  box-sizing: border-box;
+  flex: 0 0 clamp(230px, 25vw, 310px);
+  min-width: 220px;
+  align-self: stretch;
+  padding: 28px 18px;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--rail, var(--surface));
+}
+.recent-projects {
+  margin-top: 22px;
+}
+.recent-projects h2 {
+  margin: 0 0 13px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.recent-projects ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.recent-project-button {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+  gap: 10px;
+  text-align: left;
+}
+.recent-project-button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-project-button .icon {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  color: var(--purple);
+}
+.recent-projects-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 @media (max-width: 620px) {
   .welcome-layout {
     padding-inline: 18px;
@@ -152,6 +197,11 @@
   .saved-histories {
     width: calc(100% - 32px);
     padding-top: 22px;
+  }
+  .home-rail {
+    flex-basis: 210px;
+    min-width: 190px;
+    padding: 22px 12px;
   }
 }
 @media (max-height: 650px) {

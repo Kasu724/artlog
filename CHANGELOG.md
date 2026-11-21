@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reopen recent projects from the home sidebar.
+- Choose a previous version above its preview, or click the preview area and
+  pick a checkpoint from the timeline.
 - Track individual `.clip` files. Browse and restore copies from existing
   shared folder timelines.
 - Store each tracked file's history under its filename in `.artlog/projects/`.

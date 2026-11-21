@@ -25,7 +25,12 @@ import {
 } from "./ProjectSettings";
 import { HistoryTimeline, VersionDetail } from "./History";
 import { PreviewComparison } from "./PreviewComparison";
-import { ProjectChoices, Welcome } from "./ProjectEntry";
+import { ProjectChoices, RecentProjects, Welcome } from "./ProjectEntry";
+import {
+  readRecentProjects,
+  rememberRecentProject,
+  writeRecentProjects,
+} from "./recent-projects";
 import {
   ConfirmationDialog,
   TrashView,
@@ -52,6 +57,12 @@ function joinPath(root: string, ...parts: string[]): string {
 
 export default function App() {
   const [project, setProject] = useState<ProjectView | null>(null);
+  const [recentProjects, setRecentProjects] = useState(readRecentProjects);
+  const [timelinePicker, setTimelinePicker] = useState<{
+    scope: string;
+    eligibleIds: string[];
+    pick: { id: string } | null;
+  } | null>(null);
   const [view, setView] = useState<ViewName>("history");
   const [selectedId, setSelectedId] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<FileVersion[]>([]);
@@ -125,12 +136,19 @@ export default function App() {
   );
   const selectedFile = selectedFiles.find((item) => item.path === selectedPath);
 
+  useEffect(() => {
+    writeRecentProjects(recentProjects);
+  }, [recentProjects]);
+
   const projectId = project?.id;
   const refreshProject = useCallback(
     async (keepSelection = true, syncSettings = true) => {
       if (!projectId) return null;
       const next = await artlog.projectView(projectId);
       if (projectSnapshotRef.current?.id !== projectId) return null;
+      if (projectSnapshotRef.current.name !== next.name) {
+        setRecentProjects((items) => rememberRecentProject(items, next));
+      }
       setProject(next);
       if (syncSettings) setSettingsDraft(next.settings);
       setSelectedId((previous) =>
@@ -169,6 +187,8 @@ export default function App() {
   }
 
   function installProject(next: ProjectView) {
+    setRecentProjects((items) => rememberRecentProject(items, next));
+    setTimelinePicker(null);
     projectSnapshotRef.current = next;
     setProject(next);
     setSettingsDraft(next.settings);
@@ -258,19 +278,6 @@ export default function App() {
       setError(errorMessage(cause));
     } finally {
       setTrashLoading(false);
-    }
-  }
-
-  async function chooseTrash() {
-    try {
-      const root = await open({
-        directory: true,
-        multiple: false,
-        title: "Choose a folder to view its ArtLog trash",
-      });
-      if (typeof root === "string") await showTrash(root);
-    } catch (cause) {
-      setError(errorMessage(cause));
     }
   }
 
@@ -603,6 +610,7 @@ export default function App() {
     setError("");
     try {
       const next = await operation();
+      setRecentProjects((items) => rememberRecentProject(items, next));
       projectSnapshotRef.current = next;
       setProject(next);
       setSettingsDraft(next.settings);
@@ -657,6 +665,12 @@ export default function App() {
         await loadProjectFiles(next.id);
       } else if (project && kind === "removeProject") {
         await artlog.removeProject(project.id, typed);
+        setRecentProjects((items) =>
+          items.filter(
+            (item) =>
+              item.root !== project.root || item.id !== project.project.id,
+          ),
+        );
         projectSnapshotRef.current = null;
         setProject(null);
         setCapture(null);
@@ -728,6 +742,40 @@ export default function App() {
     });
 
   const atProject = !!project && !launcher && !folderChoice && !trashRoot;
+  const atHome = (!project || launcher) && !folderChoice && !trashRoot;
+  const comparisonScope =
+    atProject &&
+    view === "history" &&
+    selectedCommit &&
+    isClipFile(selectedPath)
+      ? JSON.stringify([project.id, selectedCommit.id, selectedPath])
+      : null;
+  const activePicker =
+    timelinePicker?.scope === comparisonScope ? timelinePicker : null;
+  const updateTimelinePicker = useCallback(
+    (eligibleIds: string[] | null) => {
+      if (!comparisonScope) return;
+      setTimelinePicker((current) => {
+        if (!eligibleIds) {
+          return current?.scope === comparisonScope ? null : current;
+        }
+        return {
+          scope: comparisonScope,
+          eligibleIds,
+          pick: current?.scope === comparisonScope ? current.pick : null,
+        };
+      });
+    },
+    [comparisonScope],
+  );
+
+  function selectTimelineEntry(id: string) {
+    if (!activePicker) {
+      setSelectedId(id);
+    } else if (activePicker.eligibleIds.includes(id)) {
+      setTimelinePicker({ ...activePicker, pick: { id } });
+    }
+  }
 
   const openRestore = (id: string, file: FileVersion) => {
     setError("");
@@ -744,7 +792,12 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <aside className={project ? "project-rail" : "rail"} aria-label="ArtLog">
+      <aside
+        className={
+          atHome ? "rail home-rail" : project ? "project-rail" : "rail"
+        }
+        aria-label="ArtLog"
+      >
         {project ? (
           <button
             className="brand-mark brand-button"
@@ -760,6 +813,13 @@ export default function App() {
           <span className="brand-mark">
             <Icon name="brand" />
           </span>
+        )}
+        {atHome && (
+          <RecentProjects
+            projects={recentProjects}
+            busy={busy}
+            onOpen={(item) => void openInContainer(item.root, item.id)}
+          />
         )}
         {atProject && (
           <nav className="project-nav" aria-label="Project views">
@@ -885,7 +945,6 @@ export default function App() {
             error={error}
             onChooseProject={chooseProject}
             onChooseClip={chooseClip}
-            onChooseTrash={chooseTrash}
             onCancel={
               project
                 ? () => {
@@ -997,7 +1056,8 @@ export default function App() {
                       : undefined
                   }
                   selectedId={selectedCommit?.id ?? ""}
-                  onSelect={setSelectedId}
+                  comparisonCandidates={activePicker?.eligibleIds ?? null}
+                  onSelect={selectTimelineEntry}
                 />
                 <section
                   className="version-panel"
@@ -1039,12 +1099,14 @@ export default function App() {
                       />
                       {isClipFile(selectedPath) ? (
                         <PreviewComparison
-                          key={`${project.id}:${selectedCommit.id}:${selectedPath}`}
+                          key={comparisonScope}
                           projectId={project.id}
                           currentCommit={selectedCommit}
                           commits={project.commits}
                           path={selectedPath}
                           fileId={selectedFile?.fileId}
+                          onTimelinePickerChange={updateTimelinePicker}
+                          timelinePick={activePicker?.pick ?? null}
                           onPreviewChange={() =>
                             setPreviewRevision((revision) => revision + 1)
                           }

@@ -26,6 +26,7 @@ export function HistoryTimeline({
   loadingScope = false,
   onClearScope,
   selectedId,
+  comparisonCandidates = null,
   onSelect,
 }: {
   projectId: string;
@@ -36,10 +37,14 @@ export function HistoryTimeline({
   loadingScope?: boolean;
   onClearScope?: () => void;
   selectedId: string;
+  comparisonCandidates?: string[] | null;
   onSelect: (id: string) => void;
 }) {
   return (
-    <section className="timeline-panel" aria-label="Version timeline">
+    <section
+      className={`timeline-panel${comparisonCandidates ? " choosing-comparison" : ""}`}
+      aria-label="Version timeline"
+    >
       <h2>History</h2>
       {scopeName && (
         <div className="history-scope">
@@ -69,6 +74,7 @@ export function HistoryTimeline({
                 commit={commit}
                 path={scopedPaths?.[commit.id]}
                 selected={commit.id === selectedId}
+                comparisonCandidate={comparisonCandidates?.includes(commit.id)}
                 onSelect={() => onSelect(commit.id)}
               />
             ))}
@@ -85,6 +91,7 @@ function TimelineEntry({
   commit,
   path,
   selected,
+  comparisonCandidate,
   onSelect,
 }: {
   projectId: string;
@@ -92,12 +99,14 @@ function TimelineEntry({
   commit: CommitSummary;
   path?: string;
   selected: boolean;
+  comparisonCandidate?: boolean;
   onSelect: () => void;
 }) {
   const date = formatDate(commit.timestamp);
   return (
     <button
-      className={`timeline-entry ${selected ? "selected" : ""}`}
+      className={`timeline-entry${selected ? " selected" : ""}${comparisonCandidate ? " comparison-candidate" : ""}`}
+      disabled={comparisonCandidate === false}
       aria-pressed={selected}
       onClick={onSelect}
       title={commit.title}

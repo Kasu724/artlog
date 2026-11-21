@@ -13,11 +13,14 @@ has no outbound traffic when the device is connected.
 ## Use ArtLog
 
 1. Choose **Open a .clip file** to start or reopen its version history. Use
-   **Browse saved histories** to find existing histories by folder.
+   **Recently opened** in the home sidebar to return to a project, or
+   **Browse saved histories** to find other histories by folder.
 2. Keep editing in Clip Studio Paint. ArtLog captures stable saves on the **main**
    timeline and skips identical automatic snapshots. Use **New checkpoint** to
    name a milestone and add a note. Change tracking and save delay in Settings.
-3. Select a version and file to inspect, compare, or restore. **Restore as copy**
+3. Select a version and file to inspect, compare, or restore. Pick a comparison
+   from the **Previous version** menu or click the previous preview area and
+   choose a checkpoint from History. **Restore as copy**
    is the default. It checks the restored bytes and refuses to overwrite an
    existing file. To replace a working file, close it in Clip Studio Paint, confirm
    the named target, and let ArtLog record its safety snapshot first.
@@ -47,7 +50,7 @@ when previews are missing.
   The rewrite can change checkpoint IDs. **Remove project** in Settings sends
   that file's history and settings to ArtLog trash. Both actions leave working
   artwork in place.
-- Open **ArtLog trash** from Settings or browse it by folder from the welcome
+- Open **ArtLog trash** from Settings or from the **Browse saved histories**
   screen. **Restore from trash** recovers the archived project. If the active
   project has changed since a file deletion, recovery opens a separate
   read-only history. **Permanently delete** erases the selected archive after

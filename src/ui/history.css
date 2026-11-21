@@ -45,12 +45,24 @@
   pointer-events: none;
 }
 
-.timeline-entry:hover {
+.timeline-entry:hover:not(:disabled) {
   background: #ffffff08;
 }
 .timeline-entry.selected {
   border-color: var(--warning-border);
   background: var(--selection);
+}
+.choosing-comparison .timeline-entry.comparison-candidate {
+  border-color: var(--control-border);
+  background: var(--surface);
+}
+.choosing-comparison .timeline-entry.comparison-candidate:hover,
+.choosing-comparison .timeline-entry.comparison-candidate:focus-visible {
+  border-color: var(--purple);
+  background: var(--purple-surface);
+}
+.choosing-comparison .timeline-entry:disabled:not(.selected) {
+  opacity: 0.58;
 }
 .timeline-node {
   position: relative;

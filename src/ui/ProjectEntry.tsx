@@ -1,4 +1,5 @@
 import type { ProjectSummary } from "../types";
+import type { RecentProject } from "./recent-projects";
 import { Icon } from "./Icon";
 import "./project-entry.css";
 
@@ -7,14 +8,12 @@ export function Welcome({
   error,
   onChooseProject,
   onChooseClip,
-  onChooseTrash,
   onCancel,
 }: {
   busy: boolean;
   error: string;
   onChooseProject: () => void;
   onChooseClip: () => void;
-  onChooseTrash: () => void;
   onCancel?: () => void;
 }) {
   return (
@@ -52,14 +51,11 @@ export function Welcome({
           <Icon name="file" /> Open a .clip file
         </button>
         <button
-          className="text-button"
+          className="secondary-button welcome-action"
           onClick={onChooseProject}
           disabled={busy}
         >
           <Icon name="folder" /> Browse saved histories
-        </button>
-        <button className="text-button" onClick={onChooseTrash} disabled={busy}>
-          Browse ArtLog trash
         </button>
       </div>
       {error && (
@@ -67,9 +63,47 @@ export function Welcome({
           {error}
         </p>
       )}
-      <p className="compatibility">
-        <Icon name="device" /> Stored on this device
-      </p>
+    </section>
+  );
+}
+
+export function RecentProjects({
+  projects,
+  busy,
+  onOpen,
+}: {
+  projects: RecentProject[];
+  busy: boolean;
+  onOpen: (item: RecentProject) => void;
+}) {
+  return (
+    <section
+      className="recent-projects"
+      aria-labelledby="recent-projects-title"
+    >
+      <h2 id="recent-projects-title">Recently opened</h2>
+      {projects.length ? (
+        <ul>
+          {projects.map((item) => (
+            <li key={`${item.root}\0${item.id}`}>
+              <button
+                type="button"
+                className="secondary-button recent-project-button"
+                disabled={busy}
+                onClick={() => onOpen(item)}
+                title={`${item.name}\n${item.root}`}
+              >
+                <Icon name={item.mode === "folder" ? "folder" : "file"} />
+                <span>{item.name}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="recent-projects-empty">
+          Projects you open will appear here.
+        </p>
+      )}
     </section>
   );
 }
