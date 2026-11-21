@@ -307,11 +307,37 @@ export default function App() {
         const state = await artlog.projectState(projectId);
         if (!active || projectSnapshotRef.current?.id !== projectId) return;
         setCapture(state.capture);
-        const knownHead = projectSnapshotRef.current.commits[0]?.id ?? null;
-        if (state.head !== knownHead) {
+        const currentProject = projectSnapshotRef.current;
+        const knownHead = currentProject.commits[0]?.id ?? null;
+        const previousPath = currentProject.project.path;
+        const renamedPath =
+          state.path != null &&
+          previousPath != null &&
+          state.path !== previousPath;
+        if (state.head !== knownHead || renamedPath) {
           const next = await refreshProject(true, false);
           if (!active || projectSnapshotRef.current?.id !== projectId || !next)
             return;
+          const newPath = next.project.path;
+          if (
+            previousPath != null &&
+            newPath != null &&
+            newPath !== previousPath
+          ) {
+            setSettingsDraft((draft) =>
+              draft
+                ? {
+                    ...draft,
+                    tracked: draft.tracked.map((path) =>
+                      path === previousPath ? newPath : path,
+                    ),
+                  }
+                : draft,
+            );
+            setHistoryFile((file) =>
+              file?.path === previousPath ? { ...file, path: newPath } : file,
+            );
+          }
           setCapture(state.capture);
           void loadProjectFiles(projectId);
         }

@@ -201,6 +201,7 @@ struct CaptureStatus {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectState {
     head: Option<String>,
+    path: Option<String>,
     capture: CaptureStatus,
 }
 
@@ -392,14 +393,27 @@ pub(crate) async fn project_view(
 
 #[tauri::command]
 pub(crate) async fn project_state(
+    app: AppHandle,
     state: State<'_, Desktop>,
     project_id: String,
 ) -> Reply<ProjectState> {
-    on_project(state, project_id, |repo| {
-        let _read = repo.with_read_lock().map_err(message)?;
+    let desktop = state.inner().clone();
+    background(move || {
+        let mut active = desktop.0.lock().map_err(message)?;
+        let project = active_mut(&mut active, &project_id)?;
+        if project.open_warning.is_none() {
+            if let Some(repo) = projects::reconcile_open_file(project).map_err(message)? {
+                project.stop_watcher();
+                project.repo = Arc::new(repo);
+                project.start_watcher(&app);
+            }
+        }
+        let _read = project.with_read_lock().map_err(message)?;
+        let capture = project.capture.lock().map_err(message)?.clone();
         Ok(ProjectState {
-            head: repo.head().map_err(message)?,
-            capture: repo.capture.lock().map_err(message)?.clone(),
+            head: project.head().map_err(message)?,
+            path: projects::describes(project).map_err(message)?.path,
+            capture,
         })
     })
     .await

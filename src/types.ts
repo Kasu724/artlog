@@ -13,7 +13,11 @@ export type CaptureStatus = {
   message: string;
 };
 
-export type ProjectState = { head: string | null; capture: CaptureStatus };
+export type ProjectState = {
+  head: string | null;
+  capture: CaptureStatus;
+  path?: string | null;
+};
 
 export type CommitKind =
   "baseline" | "auto" | "checkpoint" | "safety" | "restore";

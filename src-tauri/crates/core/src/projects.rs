@@ -4,7 +4,9 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
+mod source_identity;
 pub mod trash;
+use source_identity::SourceIdentity;
 pub const VERSION: u32 = 2;
 const CONTAINER_VERSION: u32 = 3;
 
@@ -264,38 +266,102 @@ impl Container {
         if projects.iter().all(|(_, info)| info.single_file.is_none()) {
             return Ok(());
         }
-        let source_names: BTreeSet<_> = children(&self.root)?
-            .iter()
-            .filter_map(|path| component(path).ok().map(str::to_owned))
-            .collect();
+        let names = self.source_names()?;
         for (path, info) in projects {
-            if let Some(id) = &info.single_file {
-                let _guard = self.project_lock(&info.id, true)?;
-                let repo = self.open_at_path(&info.id, path)?;
-                if repo.recovery_paths()?.is_empty() {
-                    let mut file = record(repo.metadata(), id)?;
-                    // A case-only rename still resolves through the original
-                    // spelling on a case-insensitive disk. Use the spelling
-                    // from the directory entry when it is unambiguous.
-                    if !source_names.contains(&file.path)
-                        && repo
-                            .source_path(&file.path)
-                            .is_ok_and(|path| path.is_file())
-                    {
-                        let folded = file.path.to_lowercase();
-                        let mut matches = source_names
-                            .iter()
-                            .filter(|name| name.to_lowercase() == folded);
-                        if let (Some(name), None) = (matches.next(), matches.next()) {
-                            file.path.clone_from(name);
-                            write_record(repo.metadata(), &file)?;
-                        }
+            let Some(id) = &info.single_file else {
+                continue;
+            };
+            let _guard = self.project_lock(&info.id, true)?;
+            let repo = self.open_at_path(&info.id, path)?;
+            self.reconcile_single(&repo, id, &names)?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_single(
+        &self,
+        repo: &Repository,
+        id: &str,
+        names: &BTreeSet<String>,
+    ) -> Result<PathBuf> {
+        if !repo.recovery_paths()?.is_empty() {
+            return Ok(repo.metadata().to_owned());
+        }
+        let mut file = record(repo.metadata(), id)?;
+        if let Ok(source) = repo.source_path(&file.path) {
+            if source.is_file() {
+                // On a case-insensitive disk, the original spelling still
+                // resolves. Read the spelling from the actual directory entry.
+                if !names.contains(&file.path) {
+                    let lower = file.path.to_lowercase();
+                    let mut matching = names.iter().filter(|name| name.to_lowercase() == lower);
+                    if let (Some(name), None) = (matching.next(), matching.next()) {
+                        file.path.clone_from(name);
+                        write_record(repo.metadata(), &file)?;
                     }
-                    self.sync_directory(&repo, &file.path)?;
+                }
+                if repo.settings()?.tracked.contains(&file.path) {
+                    remember_source(repo, &file.path);
+                }
+            } else if repo.settings()?.tracked.contains(&file.path) {
+                if let Some(target) = self.renamed_source(repo, &file.path, names)? {
+                    file.path = target;
+                    write_record(repo.metadata(), &file)?;
+                    remember_source(repo, &file.path);
                 }
             }
         }
-        Ok(())
+        self.sync_directory(repo, &file.path)
+    }
+
+    fn source_names(&self) -> Result<BTreeSet<String>> {
+        Ok(children(&self.root)?
+            .iter()
+            .filter_map(|path| component(path).ok())
+            .filter(|name| validate_clip_name(name).is_ok())
+            .map(str::to_owned)
+            .collect())
+    }
+
+    fn renamed_source(
+        &self,
+        repo: &Repository,
+        old: &str,
+        names: &BTreeSet<String>,
+    ) -> Result<Option<String>> {
+        let Some(saved) = SourceIdentity::saved(repo.metadata(), old) else {
+            return Ok(None);
+        };
+        let mut matches = names.iter().filter(|name| {
+            SourceIdentity::observe(repo, name).is_some_and(|candidate| saved.same_file(&candidate))
+        });
+        let (Some(target), None) = (matches.next(), matches.next()) else {
+            return Ok(None);
+        };
+        for (dir, info) in self.active_projects()? {
+            if info.id == repo.id {
+                continue;
+            }
+            if let Some(id) = info.single_file {
+                let other = record(&dir, &id)?;
+                if path_identity(&other.path) == path_identity(target)
+                    || SourceIdentity::saved(&dir, &other.path)
+                        .is_some_and(|identity| saved.same_file(&identity))
+                    || SourceIdentity::observe(repo, &other.path)
+                        .is_some_and(|identity| saved.same_file(&identity))
+                {
+                    return Ok(None);
+                }
+            }
+        }
+        // Recheck that an editor did not replace either path during the scan.
+        if exists(&repo.source_path(old)?)?
+            || !SourceIdentity::observe(repo, target)
+                .is_some_and(|current| saved.same_file(&current))
+        {
+            return Ok(None);
+        }
+        Ok(Some(target.clone()))
     }
 
     fn sync_directory(&self, repo: &Repository, filename: &str) -> Result<PathBuf> {
@@ -369,6 +435,7 @@ impl Container {
         validate_clip_name(path)?;
         let _guard = self.lock()?;
         trash::recover(self)?;
+        self.sync_single_directories()?;
         for item in self.list_locked()? {
             if item
                 .path
@@ -422,6 +489,7 @@ impl Container {
             ));
         }
         repo.health()?;
+        remember_source(&repo, path);
         move_path(
             stage.path(),
             &self.available_directory(repo.metadata(), &info)?,
@@ -739,6 +807,41 @@ pub fn stop_tracking(repo: &Repository, file_id: &str) -> Result<()> {
     repo.set_settings_locked(settings)
 }
 
+fn remember_source(repo: &Repository, path: &str) {
+    if let Some(identity) = SourceIdentity::observe(repo, path) {
+        // Identity is optional evidence. Its cache must not block capture.
+        let _ = identity.remember(repo.metadata());
+    }
+}
+
+/// Reconcile the open handle with the file and the directory containing its history.
+pub fn reconcile_open_file(repo: &Repository) -> Result<Option<Repository>> {
+    let container = Container::at(repo.root())?;
+    let _location = container.lock()?;
+    let _guard = container.project_lock(repo.id(), true)?;
+    if repo.pending_history_operation()? {
+        return Ok(None);
+    }
+    let current = container.open_active(repo.id())?;
+    let info = project(current.metadata())?;
+    let Some(id) = &info.single_file else {
+        return Ok(None);
+    };
+    // Generation changes from trash or deletion require an explicit reopen.
+    if current.binding.as_ref().map(|binding| &binding.generation)
+        != repo.binding.as_ref().map(|binding| &binding.generation)
+    {
+        return Err(Error::Invalid(
+            "This project's history has changed. Reopen the project.".into(),
+        ));
+    }
+    let updated = container.reconcile_single(&current, id, &container.source_names()?)?;
+    if updated.as_os_str() == repo.metadata().as_os_str() {
+        return Ok(None);
+    }
+    Ok(Some(container.open_at_path(repo.id(), updated)?))
+}
+
 pub fn relink_file(repo: &Repository, file_id: &str, path: &str) -> Result<Repository> {
     validate_clip_name(path)?;
     let container = Container::at(repo.root())?;
@@ -772,6 +875,7 @@ pub fn relink_file(repo: &Repository, file_id: &str, path: &str) -> Result<Repos
     // it, discovery picks up the directory rename from this same record.
     file.path = path.to_owned();
     write_record(repo.metadata(), &file)?;
+    remember_source(repo, path);
     let updated = container.sync_directory(repo, path)?;
     container.open_at_path(repo.id(), updated)
 }
@@ -1116,14 +1220,11 @@ mod tests {
         fs::write(&source, b"saved artwork").unwrap();
         let container = Container::create(root.path()).unwrap();
         let repo = container.open_or_create_single("art.clip").unwrap();
+        let history = repo.history().unwrap();
         let intermediate = root.path().join("intermediate.clip");
         let target = root.path().join("Art.clip");
         fs::rename(&source, &intermediate).unwrap();
         fs::rename(&intermediate, &target).unwrap();
-        if !source.exists() {
-            // Case-sensitive disks use the normal explicit relink flow.
-            return;
-        }
         let reopened = Container::discover(root.path())
             .unwrap()
             .unwrap()
@@ -1135,7 +1236,7 @@ mod tests {
             describes(&reopened).unwrap().path.as_deref(),
             Some("Art.clip")
         );
-        assert_eq!(reopened.history().unwrap(), repo.history().unwrap());
+        assert_eq!(reopened.history().unwrap(), history);
     }
 
     #[test]

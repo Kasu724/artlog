@@ -193,6 +193,71 @@ fn single_file_watcher_and_rename_preserve_scope_and_identity() {
 }
 
 #[test]
+fn detects_rename_in_an_open_session_and_continues_its_history() {
+    let root = sources();
+    let container = Container::create(root.path()).unwrap();
+    let repo = container.open_or_create_single("first.clip").unwrap();
+    let baseline = repo.history().unwrap().remove(0);
+    fs::rename(
+        root.path().join("first.clip"),
+        root.path().join("cover.clip"),
+    )
+    .unwrap();
+    let renamed = projects::reconcile_open_file(&repo).unwrap().unwrap();
+    assert_eq!(renamed.id(), repo.id());
+    assert!(!repo.metadata().exists());
+    assert!(renamed.metadata().ends_with(".artlog/projects/cover.clip"));
+    assert_eq!(renamed.history().unwrap(), std::slice::from_ref(&baseline));
+    fs::write(root.path().join("cover.clip"), b"finished cover").unwrap();
+    let capture = renamed.capture(Kind::Auto, "", "").unwrap().unwrap();
+    assert_eq!(capture.files[0].file_id, baseline.files[0].file_id);
+    assert_eq!(capture.files[0].path, "cover.clip");
+    assert_eq!(capture.parent.as_deref(), Some(baseline.id.as_str()));
+}
+
+#[test]
+fn reopens_renamed_artwork_after_a_close_without_creating_another_history() {
+    let root = sources();
+    let container = Container::create(root.path()).unwrap();
+    let repo = container.open_or_create_single("first.clip").unwrap();
+    let id = repo.id().to_owned();
+    let head = repo.head().unwrap();
+    drop(repo);
+    drop(container);
+    fs::rename(
+        root.path().join("first.clip"),
+        root.path().join("cover.clip"),
+    )
+    .unwrap();
+    let container = Container::create(root.path()).unwrap();
+    let repo = container.open_or_create_single("cover.clip").unwrap();
+    assert_eq!(repo.id(), id);
+    assert_eq!(repo.head().unwrap(), head);
+    assert_eq!(container.list().unwrap().len(), 1);
+}
+
+#[test]
+fn leaves_history_unlinked_when_identity_is_missing_or_ambiguous() {
+    let root = sources();
+    let container = Container::create(root.path()).unwrap();
+    let repo = container.open_or_create_single("first.clip").unwrap();
+    let source = root.path().join("first.clip");
+    let moved = root.path().join("moved.clip");
+    let alias = root.path().join("alias.clip");
+    fs::hard_link(&source, &alias).unwrap();
+    fs::rename(&source, &moved).unwrap();
+    assert!(projects::reconcile_open_file(&repo).unwrap().is_none());
+    fs::remove_file(alias).unwrap();
+    fs::remove_file(moved).unwrap();
+    // second.clip contains identical bytes but was created as a distinct file.
+    assert!(projects::reconcile_open_file(&repo).unwrap().is_none());
+    assert_eq!(
+        projects::describes(&repo).unwrap().path.as_deref(),
+        Some("first.clip")
+    );
+}
+
+#[test]
 fn stop_delete_restore_and_remove_are_scoped_to_the_selected_history() {
     let root = sources();
     let legacy = Repository::init(root.path(), both()).unwrap();

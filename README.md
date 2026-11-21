@@ -37,10 +37,11 @@ when previews are missing.
 
 - In **Files** or **Settings**, use **Stop tracking** to stop capturing future
   saves and keep earlier versions. Select the file again in Settings to resume
-  tracking. After renaming a working file in the same folder, use **Browse
-  saved histories** to reopen its history and choose **Link renamed file** in
-  Files or Settings. ArtLog renames the history directory and keeps the same
-  checkpoints, notes, and previews.
+  tracking. When ArtLog recognizes a same folder rename, it updates the
+  history directory and keeps the same checkpoints, notes, and previews.
+  This also works on reopen if ArtLog previously recorded the file's identity.
+  If it cannot identify a rename, open the original history through **Browse
+  saved histories** and use **Link renamed file** in Files or Settings.
 - **Delete file history** archives the pre-delete project, stops tracking the
   selected file, and removes its saved versions from the active timeline.
   The rewrite can change checkpoint IDs. **Remove project** in Settings sends

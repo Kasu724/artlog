@@ -209,6 +209,73 @@ describe("ArtLog desktop workflows", () => {
     );
   });
 
+  it("reconciles a same-folder rename with an unchanged head and keeps other settings edits", async () => {
+    const oldPath = "painting.clip";
+    const newPath = "painting-final.clip";
+    const original = project([secondCommit, firstCommit]);
+    original.project = {
+      ...original.project,
+      mode: "singleFile",
+      path: oldPath,
+    };
+    original.name = oldPath;
+    const renamed: ProjectView = {
+      ...original,
+      name: newPath,
+      project: { ...original.project, path: newPath },
+      settings: { ...original.settings, tracked: [newPath] },
+      files: [
+        {
+          id: "file-1",
+          path: newPath,
+          tracked: true,
+          hasHistory: true,
+          present: true,
+        },
+      ],
+    };
+    let activePath = oldPath;
+    const base = invokeMock.getMockImplementation();
+    invokeMock.mockImplementation((command: string, args: unknown) => {
+      if (command === "open_clip") return Promise.resolve(original);
+      if (command === "project_state")
+        return Promise.resolve({
+          head: "v2",
+          path: activePath,
+          capture: {
+            projectId: original.id,
+            state: "current",
+            message: "Up to date",
+          },
+        });
+      if (command === "project_view") return Promise.resolve(renamed);
+      if (command === "project_files")
+        return Promise.resolve([{ path: activePath, size: 24576 }]);
+      return base?.(command, args);
+    });
+    openMock.mockResolvedValue("C:\\art\\painting.clip");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Open a .clip file" }));
+    await screen.findByRole("heading", { name: oldPath });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByLabelText("Automatic capture"));
+    activePath = newPath;
+    await waitFor(
+      () => {
+        expect(screen.getByRole("checkbox", { name: newPath })).toBeChecked();
+        expect(screen.getByLabelText("Automatic capture")).not.toBeChecked();
+      },
+      { timeout: 5000 },
+    );
+    expect(invokeMock).toHaveBeenCalledWith("project_view", {
+      projectId: original.id,
+    });
+    expect(invokeMock).toHaveBeenCalledWith("project_files", {
+      projectId: original.id,
+    });
+    expect(screen.getByRole("heading", { name: newPath })).toBeVisible();
+  }, 12000);
+
   it("relinks a missing file and refreshes the renamed history", async () => {
     const file = {
       id: "stable-file",
