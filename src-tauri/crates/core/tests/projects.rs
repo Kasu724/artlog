@@ -126,9 +126,11 @@ fn leaves_a_legacy_restore_journal_available_until_resolved() {
 fn single_file_watcher_and_rename_preserve_scope_and_identity() {
     let root = sources();
     let container = Container::create(root.path()).unwrap();
-    let folder = container.create_folder(both()).unwrap();
+    let sibling = container.open_or_create_single("second.clip").unwrap();
     let single = container.open_or_create_single("first.clip").unwrap();
-    assert_ne!(single.id(), folder.id());
+    assert_ne!(single.id(), sibling.id());
+    assert!(single.metadata().ends_with(".artlog/projects/first.clip"));
+    assert!(sibling.metadata().ends_with(".artlog/projects/second.clip"));
     assert_eq!(
         single.id(),
         container.open_or_create_single("first.clip").unwrap().id()
@@ -159,14 +161,20 @@ fn single_file_watcher_and_rename_preserve_scope_and_identity() {
     let head = single.history().unwrap().remove(0);
     assert_eq!(head.files.len(), 1);
     assert_eq!(head.files[0].file_id.as_ref(), Some(id));
-    assert_eq!(folder.history().unwrap().len(), 1);
+    assert_eq!(sibling.history().unwrap().len(), 1);
 
     fs::rename(
         root.path().join("first.clip"),
         root.path().join("renamed.clip"),
     )
     .unwrap();
-    projects::relink_file(&single, id, "renamed.clip").unwrap();
+    assert!(projects::relink_file(&single, id, "second.clip").is_err());
+    let relinked = projects::relink_file(&single, id, "renamed.clip").unwrap();
+    assert!(!single.metadata().exists());
+    assert!(relinked
+        .metadata()
+        .ends_with(".artlog/projects/renamed.clip"));
+    assert_eq!(relinked.head().unwrap().as_deref(), Some(head.id.as_str()));
     let reopened = container.open_or_create_single("renamed.clip").unwrap();
     assert_eq!(reopened.id(), single.id());
     assert_eq!(
@@ -187,8 +195,9 @@ fn single_file_watcher_and_rename_preserve_scope_and_identity() {
 #[test]
 fn stop_delete_restore_and_remove_are_scoped_to_the_selected_history() {
     let root = sources();
-    let container = Container::create(root.path()).unwrap();
-    let folder = container.create_folder(both()).unwrap();
+    let legacy = Repository::init(root.path(), both()).unwrap();
+    let container = Container::discover(root.path()).unwrap().unwrap();
+    let folder = container.open(legacy.id()).unwrap();
     let sibling = container.open_or_create_single("first.clip").unwrap();
     fs::write(root.path().join("first.clip"), b"new working bytes").unwrap();
     folder
@@ -288,7 +297,7 @@ fn v2_in_place_restore_verifies_the_target_and_preserves_safety_bytes() {
 }
 
 #[test]
-fn recovered_single_file_history_does_not_take_the_folder_project_slot() {
+fn recovered_history_does_not_take_the_active_file_slot() {
     let root = sources();
     let container = Container::create(root.path()).unwrap();
     let single = container.open_or_create_single("first.clip").unwrap();
@@ -298,10 +307,12 @@ fn recovered_single_file_history_does_not_take_the_folder_project_slot() {
     let recovered = container.restore_trash(&archive.id).unwrap();
     assert!(recovered.recovered);
     assert_ne!(recovered.id, replacement.id());
-    let folder = container.create_folder(both()).unwrap();
+    let sibling = container.open_or_create_single("second.clip").unwrap();
+    assert!(sibling.metadata().ends_with(".artlog/projects/second.clip"));
+    assert_eq!(recovered.mode, Mode::Folder);
     assert_eq!(
-        projects::open_folder(root.path()).unwrap().id(),
-        folder.id()
+        container.open_or_create_single("first.clip").unwrap().id(),
+        replacement.id()
     );
     assert_eq!(container.list().unwrap().len(), 3);
 }

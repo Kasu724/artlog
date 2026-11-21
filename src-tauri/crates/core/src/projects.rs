@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 pub mod trash;
 pub const VERSION: u32 = 2;
+const CONTAINER_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -70,7 +71,8 @@ impl Binding {
         let guard = lock_file(&self.container.join("locks").join(&repo.id), exclusive)?;
         check_directory(&self.container.join("projects"))?;
         check_directory(&repo.metadata)?;
-        if project(&repo.metadata)?.generation != self.generation {
+        let info = project(&repo.metadata)?;
+        if info.id != repo.id || info.generation != self.generation {
             return Err(Error::Invalid(
                 "This project's history has changed. Reopen the project.".into(),
             ));
@@ -168,7 +170,11 @@ impl Container {
             self.publish_marker()?;
         }
         self.verify_marker()?;
-        trash::recover(self)
+        trash::recover(self)?;
+        if self.container_version()? != CONTAINER_VERSION {
+            self.publish_marker()?;
+        }
+        self.sync_single_directories()
     }
 
     fn lock(&self) -> Result<WriteGuard> {
@@ -187,27 +193,133 @@ impl Container {
         atomic_json(
             &self.dir.join("container.json"),
             &ContainerFormat {
-                format_version: VERSION,
+                format_version: CONTAINER_VERSION,
             },
         )
     }
 
     fn verify_marker(&self) -> Result<()> {
-        let format: ContainerFormat = read_json(&self.dir.join("container.json"))?;
-        if format.format_version != VERSION {
+        let version = self.container_version()?;
+        if !matches!(version, VERSION | CONTAINER_VERSION) {
             return Err(Error::Invalid(format!(
-                "ArtLog container format {} is unsupported.",
-                format.format_version
+                "ArtLog container format {version} is unsupported."
             )));
         }
         Ok(())
     }
 
-    fn active_path(&self, id: &str) -> Result<PathBuf> {
-        check_uuid(id)?;
+    fn container_version(&self) -> Result<u32> {
+        let format: ContainerFormat = read_json(&self.dir.join("container.json"))?;
+        Ok(format.format_version)
+    }
+
+    fn project_directory(&self, name: &str) -> Result<PathBuf> {
+        if check_uuid(name).is_err() {
+            validate_clip_name(name)?;
+        }
         let parent = self.dir.join("projects");
         check_directory(&parent)?;
-        Ok(parent.join(id))
+        Ok(parent.join(name))
+    }
+
+    fn active_path(&self, id: &str) -> Result<PathBuf> {
+        check_uuid(id)?;
+        Ok(self
+            .active_projects()?
+            .into_iter()
+            .find(|(_, info)| info.id == id)
+            .map(|(path, _)| path)
+            .unwrap_or(self.project_directory(id)?))
+    }
+
+    fn active_projects(&self) -> Result<Vec<(PathBuf, Project)>> {
+        let mut ids = BTreeSet::new();
+        let mut projects = Vec::new();
+        for path in children(&self.dir.join("projects"))? {
+            let name = component(&path)?;
+            let info = project(&path)?;
+            if (check_uuid(name).is_ok() && name != info.id) || !ids.insert(info.id.clone()) {
+                return Err(Error::Corrupt(
+                    "Invalid or duplicate project identity.".into(),
+                ));
+            }
+            self.project_directory(name)?;
+            projects.push((path, info));
+        }
+        Ok(projects)
+    }
+
+    fn available_directory(&self, dir: &Path, info: &Project) -> Result<PathBuf> {
+        if let Some(id) = &info.single_file {
+            let target = self.project_directory(&record(dir, id)?.path)?;
+            if !exists(&target)? {
+                return Ok(target);
+            }
+        }
+        self.project_directory(&info.id)
+    }
+
+    fn sync_single_directories(&self) -> Result<()> {
+        let projects = self.active_projects()?;
+        if projects.iter().all(|(_, info)| info.single_file.is_none()) {
+            return Ok(());
+        }
+        let source_names: BTreeSet<_> = children(&self.root)?
+            .iter()
+            .filter_map(|path| component(path).ok().map(str::to_owned))
+            .collect();
+        for (path, info) in projects {
+            if let Some(id) = &info.single_file {
+                let _guard = self.project_lock(&info.id, true)?;
+                let repo = self.open_at_path(&info.id, path)?;
+                if repo.recovery_paths()?.is_empty() {
+                    let mut file = record(repo.metadata(), id)?;
+                    // A case-only rename still resolves through the original
+                    // spelling on a case-insensitive disk. Use the spelling
+                    // from the directory entry when it is unambiguous.
+                    if !source_names.contains(&file.path)
+                        && repo
+                            .source_path(&file.path)
+                            .is_ok_and(|path| path.is_file())
+                    {
+                        let folded = file.path.to_lowercase();
+                        let mut matches = source_names
+                            .iter()
+                            .filter(|name| name.to_lowercase() == folded);
+                        if let (Some(name), None) = (matches.next(), matches.next()) {
+                            file.path.clone_from(name);
+                            write_record(repo.metadata(), &file)?;
+                        }
+                    }
+                    self.sync_directory(&repo, &file.path)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn sync_directory(&self, repo: &Repository, filename: &str) -> Result<PathBuf> {
+        let from = repo.metadata();
+        let target = self.project_directory(filename)?;
+        if component(from)? == filename {
+            return Ok(target);
+        }
+        if exists(&target)? {
+            if project(&target)?.id != repo.id {
+                // A different history owns the directory. Keep the stable ID
+                // as a fallback until that location becomes available.
+                return Ok(from.to_owned());
+            }
+            // A case-only change can address the same directory twice on a
+            // case-insensitive filesystem. The UUID path also makes an
+            // interruption between the two moves recoverable on reopen.
+            let temporary = self.project_directory(repo.id())?;
+            move_path(from, &temporary)?;
+            move_path(&temporary, &target)?;
+        } else {
+            move_path(from, &target)?;
+        }
+        Ok(target)
     }
 
     pub fn list(&self) -> Result<Vec<Summary>> {
@@ -216,18 +328,8 @@ impl Container {
     }
 
     fn list_locked(&self) -> Result<Vec<Summary>> {
-        let dir = self.dir.join("projects");
         let mut summaries = Vec::new();
-        for path in children(&dir)? {
-            let id = component(&path)?;
-            check_uuid(id)?;
-            check_directory(&path)?;
-            let info = project(&path)?;
-            if id != info.id {
-                return Err(Error::Corrupt(
-                    "Project identity differs from its directory.".into(),
-                ));
-            }
+        for (path, info) in self.active_projects()? {
             summaries.push(summary(&self.root, &path, &info)?);
         }
         summaries.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));
@@ -245,7 +347,10 @@ impl Container {
     }
 
     fn open_active(&self, id: &str) -> Result<Repository> {
-        let dir = self.active_path(id)?;
+        self.open_at_path(id, self.active_path(id)?)
+    }
+
+    fn open_at_path(&self, id: &str, dir: PathBuf) -> Result<Repository> {
         let mut repo = Repository::open_at(self.root.clone(), dir, VERSION)?;
         let info = project(repo.metadata())?;
         if info.id != id || repo.id != id {
@@ -261,12 +366,7 @@ impl Container {
     }
 
     pub fn open_or_create_single(&self, path: &str) -> Result<Repository> {
-        validate_relative(path)?;
-        if path.contains('/') || !is_clip_document(Path::new(path)) {
-            return Err(Error::Invalid(
-                "Choose one .clip file in this folder.".into(),
-            ));
-        }
+        validate_clip_name(path)?;
         let _guard = self.lock()?;
         trash::recover(self)?;
         for item in self.list_locked()? {
@@ -277,31 +377,16 @@ impl Container {
                 return self.open_locked(&item.id);
             }
         }
-        self.create_project(Mode::SingleFile, vec![path.to_owned()])
+        self.create_single(path)
     }
 
-    pub fn create_folder(&self, tracked: Vec<String>) -> Result<Repository> {
-        let _guard = self.lock()?;
-        trash::recover(self)?;
-        if self
-            .list_locked()?
-            .iter()
-            .any(|item| item.mode == Mode::Folder && !item.recovered)
-        {
-            return Err(Error::Invalid(
-                "A folder project already exists here. Open it from the project list.".into(),
-            ));
-        }
-        self.create_project(Mode::Folder, tracked)
-    }
-
-    fn create_project(&self, mode: Mode, tracked: Vec<String>) -> Result<Repository> {
-        let mut settings = Settings {
-            tracked,
+    fn create_single(&self, path: &str) -> Result<Repository> {
+        regular(&self.root.join(path))?;
+        let settings = Settings {
+            tracked: vec![path.to_owned()],
             auto_capture: true,
             debounce_ms: 1200,
         };
-        normalize_tracking_settings(&mut settings)?;
         let id = new_id();
         let stage = self.stage()?;
         let repo = Repository::init_at(
@@ -310,48 +395,37 @@ impl Container {
             id.clone(),
             VERSION,
         )?;
-        let single_file = if mode == Mode::SingleFile {
-            let path = &settings.tracked[0];
-            let source = repo.source_path(path)?;
-            if !source.is_file() {
-                return Err(Error::Invalid(
-                    "The selected .clip file is unavailable.".into(),
-                ));
-            }
-            let record = FileRecord {
-                id: new_id(),
-                path: path.clone(),
-            };
-            write_record(repo.metadata(), &record)?;
-            Some(record.id)
-        } else {
-            None
+        let record = FileRecord {
+            id: new_id(),
+            path: path.to_owned(),
         };
-        atomic_json(
-            &repo.metadata.join("project.json"),
-            &Project {
-                id: id.clone(),
-                generation: new_id(),
-                mode,
-                single_file,
-                name: None,
-                legacy_namespace: id.clone(),
-                recovered: false,
-            },
-        )?;
+        write_record(repo.metadata(), &record)?;
+        let info = Project {
+            id: id.clone(),
+            generation: new_id(),
+            mode: Mode::SingleFile,
+            single_file: Some(record.id),
+            name: None,
+            legacy_namespace: id.clone(),
+            recovered: false,
+        };
+        atomic_json(&repo.metadata.join("project.json"), &info)?;
         repo.set_settings_locked(settings)?;
         let baseline = repo.capture_locked(
             Kind::Baseline,
             "Project created",
             "Initial project snapshot",
         )?;
-        if mode == Mode::SingleFile && baseline.is_none_or(|commit| commit.files.len() != 1) {
+        if baseline.is_none_or(|commit| commit.files.len() != 1) {
             return Err(Error::Invalid(
                 "The selected .clip file disappeared during setup.".into(),
             ));
         }
         repo.health()?;
-        move_path(stage.path(), &self.active_path(&id)?)?;
+        move_path(
+            stage.path(),
+            &self.available_directory(repo.metadata(), &info)?,
+        )?;
         self.open_locked(&id)
     }
 
@@ -588,14 +662,20 @@ pub fn selected_file(path: &Path) -> Result<(PathBuf, String)> {
         .parent()
         .ok_or_else(|| Error::Invalid("The selected file has no folder.".into()))?;
     let name = component(path)?.to_owned();
-    validate_relative(&name)?;
+    validate_clip_name(&name)?;
     let root = canonical_root(parent)?;
     regular(&root.join(&name))?;
     Ok((root, name))
 }
 
-pub fn same_path(a: &str, b: &str) -> bool {
-    path_identity(a) == path_identity(b)
+fn validate_clip_name(name: &str) -> Result<()> {
+    validate_relative(name)?;
+    if name.contains('/') || !is_clip_document(Path::new(name)) {
+        return Err(Error::Invalid(
+            "Choose one .clip file in this folder.".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn describes(repo: &Repository) -> Result<Summary> {
@@ -648,7 +728,7 @@ pub fn scan_project_files(repo: &Repository) -> Result<Vec<ScanEntry>> {
         let size = regular(&source)?.len();
         return Ok(vec![ScanEntry { path, size }]);
     }
-    Repository::scan(repo.root())
+    Ok(Vec::new())
 }
 
 pub fn stop_tracking(repo: &Repository, file_id: &str) -> Result<()> {
@@ -659,49 +739,41 @@ pub fn stop_tracking(repo: &Repository, file_id: &str) -> Result<()> {
     repo.set_settings_locked(settings)
 }
 
-pub fn relink_file(repo: &Repository, file_id: &str, path: &str) -> Result<()> {
+pub fn relink_file(repo: &Repository, file_id: &str, path: &str) -> Result<Repository> {
+    validate_clip_name(path)?;
     let container = Container::at(repo.root())?;
     let _location = container.lock()?;
     let _guard = repo.with_write_lock()?;
     ensure_no_restore(repo)?;
+    if project(repo.metadata())?.single_file.as_deref() != Some(file_id) {
+        return Err(Error::Invalid(
+            "Choose this history's linked .clip file.".into(),
+        ));
+    }
     let mut file = record(repo.metadata(), file_id)?;
     if repo.source_path(&file.path)?.is_file() {
         return Err(Error::Invalid(
             "Move or rename the original file before linking its new location.".into(),
         ));
     }
-    if !is_clip_document(Path::new(path)) {
-        return Err(Error::Invalid("Choose a .clip file.".into()));
-    }
     regular(&repo.source_path(path)?)?;
-    if describes(repo)?.mode == Mode::SingleFile {
-        if path.contains('/') {
-            return Err(Error::Invalid(
-                "Choose a replacement in the same folder.".into(),
-            ));
-        }
-        if container.list_locked()?.iter().any(|item| {
-            item.id != repo.id
-                && item
-                    .path
-                    .as_ref()
-                    .is_some_and(|other| same_path(other, path))
-        }) {
-            return Err(Error::Invalid(
-                "That file already has a single-file project in this folder.".into(),
-            ));
-        }
-    }
-    if records(repo)?
-        .iter()
-        .any(|other| other.id != file_id && path_identity(&other.path) == path_identity(path))
-    {
+    if container.list_locked()?.iter().any(|item| {
+        item.id != repo.id
+            && item
+                .path
+                .as_deref()
+                .is_some_and(|other| path_identity(other) == path_identity(path))
+    }) {
         return Err(Error::Invalid(
-            "That path already has a file identity in this project.".into(),
+            "That file already has a history in this folder.".into(),
         ));
     }
+    // The file record is authoritative. If the process stops after updating
+    // it, discovery picks up the directory rename from this same record.
     file.path = path.to_owned();
-    write_record(repo.metadata(), &file)
+    write_record(repo.metadata(), &file)?;
+    let updated = container.sync_directory(repo, path)?;
+    container.open_at_path(repo.id(), updated)
 }
 
 pub fn rename(repo: &Repository, name: &str) -> Result<()> {
@@ -1036,6 +1108,78 @@ fn sync_parent(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn follows_case_only_rename_on_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("art.clip");
+        fs::write(&source, b"saved artwork").unwrap();
+        let container = Container::create(root.path()).unwrap();
+        let repo = container.open_or_create_single("art.clip").unwrap();
+        let intermediate = root.path().join("intermediate.clip");
+        let target = root.path().join("Art.clip");
+        fs::rename(&source, &intermediate).unwrap();
+        fs::rename(&intermediate, &target).unwrap();
+        if !source.exists() {
+            // Case-sensitive disks use the normal explicit relink flow.
+            return;
+        }
+        let reopened = Container::discover(root.path())
+            .unwrap()
+            .unwrap()
+            .open_or_create_single("Art.clip")
+            .unwrap();
+        assert_eq!(reopened.id(), repo.id());
+        assert_eq!(component(reopened.metadata()).unwrap(), "Art.clip");
+        assert_eq!(
+            describes(&reopened).unwrap().path.as_deref(),
+            Some("Art.clip")
+        );
+        assert_eq!(reopened.history().unwrap(), repo.history().unwrap());
+    }
+
+    #[test]
+    fn upgrades_uuid_directory_and_finishes_an_interrupted_relink() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("art.clip"), b"saved artwork").unwrap();
+        let container = Container::create(root.path()).unwrap();
+        let repo = container.open_or_create_single("art.clip").unwrap();
+        let history = repo.history().unwrap();
+        let file_id = history[0].files[0].file_id.as_deref().unwrap();
+        let old_dir = container.project_directory(repo.id()).unwrap();
+        move_path(repo.metadata(), &old_dir).unwrap();
+        atomic_json(
+            &container.dir.join("container.json"),
+            &ContainerFormat {
+                format_version: VERSION,
+            },
+        )
+        .unwrap();
+        let container = Container::discover(root.path()).unwrap().unwrap();
+        let upgraded = container.open(repo.id()).unwrap();
+        assert_eq!(upgraded.metadata(), repo.metadata());
+        assert_eq!(container.container_version().unwrap(), CONTAINER_VERSION);
+        assert_eq!(upgraded.history().unwrap(), history);
+        assert!(!old_dir.exists());
+
+        fs::rename(root.path().join("art.clip"), root.path().join("new.clip")).unwrap();
+        write_record(
+            upgraded.metadata(),
+            &FileRecord {
+                id: file_id.to_owned(),
+                path: "new.clip".into(),
+            },
+        )
+        .unwrap();
+        let reopened = Container::discover(root.path())
+            .unwrap()
+            .unwrap()
+            .open(repo.id())
+            .unwrap();
+        assert!(reopened.metadata().ends_with(".artlog/projects/new.clip"));
+        assert_eq!(reopened.history().unwrap(), history);
+        assert!(!upgraded.metadata().exists());
+    }
 
     #[test]
     fn migration_resumes_cleanup_only_after_verifying_both_copies() {

@@ -47,12 +47,16 @@ enum Move {
     Archive {
         trash: String,
         project: String,
+        #[serde(default)]
+        directory: Option<String>,
         before: String,
         after: Option<String>,
     },
     Restore {
         trash: String,
         project: String,
+        #[serde(default)]
+        directory: Option<String>,
         before: Option<String>,
         after: String,
     },
@@ -169,6 +173,7 @@ fn archive_file_with(
         &Move::Archive {
             trash: archived.item.id,
             project: repo.id.clone(),
+            directory: Some(component(repo.metadata())?.to_owned()),
             before: info.generation,
             after: Some(next.generation),
         },
@@ -195,6 +200,7 @@ pub fn archive_project(repo: &Repository, confirmation: &str) -> Result<()> {
         &Move::Archive {
             trash: archived.item.id,
             project: repo.id.clone(),
+            directory: Some(component(repo.metadata())?.to_owned()),
             before: project(repo.metadata())?.generation,
             after: None,
         },
@@ -299,12 +305,18 @@ impl Container {
         atomic_json(&temp.path().join("project.json"), &info)?;
         let candidate = open_payload(self, temp.path())?;
         candidate.health()?;
+        let install = if previous.is_some() {
+            active
+        } else {
+            self.available_directory(candidate.metadata(), &info)?
+        };
         move_path(temp.path(), &working_path(self, id, "install")?)?;
         write_move(
             self,
             &Move::Restore {
                 trash: id.to_owned(),
                 project: info.id.clone(),
+                directory: Some(component(&install)?.to_owned()),
                 before: previous,
                 after: info.generation.clone(),
             },
@@ -629,6 +641,7 @@ fn finish_move(container: &Container) -> Result<()> {
         Move::Archive {
             trash,
             project: id,
+            directory,
             before,
             after,
         } => {
@@ -641,7 +654,7 @@ fn finish_move(container: &Container) -> Result<()> {
                     "History move does not match its trash record.".into(),
                 ));
             }
-            let active = container.active_path(&id)?;
+            let active = container.project_directory(directory.as_deref().unwrap_or(&id))?;
             let payload = trash_path(container, &trash)?.join("payload");
             let stage = working_path(container, &trash, "install")?;
             if let Some(expected) = &after {
@@ -680,10 +693,11 @@ fn finish_move(container: &Container) -> Result<()> {
         Move::Restore {
             trash,
             project: id,
+            directory,
             before,
             after,
         } => {
-            let active = container.active_path(&id)?;
+            let active = container.project_directory(directory.as_deref().unwrap_or(&id))?;
             let stage = working_path(container, &trash, "install")?;
             let displaced = working_path(container, &trash, "displaced")?;
             if generation(&active)?.as_deref() != Some(&after) {
@@ -731,9 +745,7 @@ mod tests {
         fs::write(root.path().join("a.clip"), b"keep working a").unwrap();
         fs::write(root.path().join("b.clip"), b"keep working b").unwrap();
         let container = Container::create(root.path()).unwrap();
-        let repo = container
-            .create_folder(vec!["a.clip".into(), "b.clip".into()])
-            .unwrap();
+        let repo = container.open_or_create_single("a.clip").unwrap();
         (root, container, repo)
     }
 
@@ -776,7 +788,12 @@ mod tests {
 
             let reopened = Container::discover(root.path()).unwrap().unwrap();
             let active = reopened.open(repo.id()).unwrap();
-            assert_eq!(active.history().unwrap()[0].files, [head.files[1].clone()]);
+            assert!(active.metadata().ends_with(".artlog/projects/a.clip"));
+            assert!(active
+                .history()
+                .unwrap()
+                .iter()
+                .all(|commit| commit.files.is_empty()));
             assert_eq!(reopened.list_trash().unwrap()[0].id, trash);
             assert_eq!(
                 fs::read(root.path().join("a.clip")).unwrap(),
@@ -850,7 +867,7 @@ mod tests {
         assert!(container.list_trash().unwrap()[0].purge_pending);
         container.purge_trash(trash, "DELETE").unwrap();
         assert!(container.list_trash().unwrap().is_empty());
-        assert_eq!(active.health().unwrap().objects, 1);
+        assert_eq!(active.health().unwrap().objects, 0);
         assert_eq!(
             fs::read(root.path().join("a.clip")).unwrap(),
             b"keep working a"
