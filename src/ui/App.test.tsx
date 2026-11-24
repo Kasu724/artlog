@@ -264,12 +264,16 @@ describe("ArtLog desktop workflows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open a .clip file" }));
     await screen.findByRole("heading", { name: oldPath });
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByLabelText("Automatic capture"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Automatic capture" }),
+    );
     activePath = newPath;
     await waitFor(
       () => {
         expect(screen.getByRole("heading", { name: newPath })).toBeVisible();
-        expect(screen.getByLabelText("Automatic capture")).not.toBeChecked();
+        expect(
+          screen.getByRole("checkbox", { name: "Automatic capture" }),
+        ).not.toBeChecked();
       },
       { timeout: 5000 },
     );
@@ -626,7 +630,9 @@ describe("ArtLog desktop workflows", () => {
     });
     await openExistingProject();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByLabelText("Automatic capture"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Automatic capture" }),
+    );
     fireEvent.change(screen.getByRole("slider"), { target: { value: "2500" } });
     fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
     await waitFor(() =>
@@ -673,7 +679,9 @@ describe("ArtLog desktop workflows", () => {
     );
     await openExistingProject();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByLabelText("Automatic capture"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Automatic capture" }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Compress existing history" }),
     );
@@ -689,7 +697,9 @@ describe("ArtLog desktop workflows", () => {
     expect(
       screen.getByLabelText("Compress new content objects"),
     ).not.toBeChecked();
-    expect(screen.getByLabelText("Automatic capture")).not.toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Automatic capture" }),
+    ).not.toBeChecked();
     expect(screen.getByText("Unsaved settings")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Compress new content objects"));
     expect(await screen.findByText("History compression is on.")).toBeTruthy();
