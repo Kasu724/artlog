@@ -664,7 +664,13 @@ fn write_move(container: &Container, operation: &Move) -> Result<()> {
             "An interrupted ArtLog move needs recovery.".into(),
         ));
     }
-    atomic_json(&path, operation)
+    let bytes = serde_json::to_vec(operation).map_err(|error| Error::Corrupt(error.to_string()))?;
+    if bytes.len() > MAX_METADATA_BYTES {
+        return Err(Error::Invalid(
+            "This history is too large to record a recoverable deletion.".into(),
+        ));
+    }
+    atomic_write(&path, &bytes)
 }
 
 fn move_project(operation: &Move) -> &str {

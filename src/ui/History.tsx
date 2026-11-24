@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { artlog } from "../api";
 import type { CommitSummary, CommitThumbnail, FileVersion } from "../types";
-import { formatBytes, formatDate, isClipFile } from "./format";
+import { formatBytes, formatDate } from "./format";
 import { Icon } from "./Icon";
 import "./history.css";
 
@@ -19,63 +19,69 @@ function kindName(kind: CommitSummary["kind"]): string {
 
 export function HistoryTimeline({
   projectId,
-  previewRevision = 0,
   commits,
-  scopedPaths,
-  scopeName,
-  loadingScope = false,
-  onClearScope,
   selectedId,
   comparisonCandidates = null,
   onSelect,
+  onEdit,
+  editDisabled,
 }: {
   projectId: string;
-  previewRevision?: number;
   commits: CommitSummary[];
-  scopedPaths?: Record<string, string>;
-  scopeName?: string;
-  loadingScope?: boolean;
-  onClearScope?: () => void;
   selectedId: string;
   comparisonCandidates?: string[] | null;
   onSelect: (id: string) => void;
+  onEdit?: (commit: CommitSummary) => void;
+  editDisabled?: boolean;
 }) {
   return (
     <section
       className={`timeline-panel${comparisonCandidates ? " choosing-comparison" : ""}`}
       aria-label="Version timeline"
     >
-      {scopeName && (
-        <div className="history-scope">
-          <span title={scopeName}>{scopeName}</span>
-          <button className="text-button" onClick={onClearScope}>
-            Show project timeline
-          </button>
-        </div>
-      )}
-      {loadingScope ? (
-        <p className="muted-caption" role="status">
-          Loading file history…
-        </p>
-      ) : commits.length === 0 ? (
+      {commits.length === 0 ? (
         <div className="timeline-empty">
           <h3>No snapshots yet</h3>
-          <p>Save a named checkpoint to start your project history.</p>
+          <p>Save your .clip file in Clip Studio Paint to capture a version.</p>
         </div>
       ) : (
         <div className="timeline-scroll">
           <div className="timeline-list">
             {commits.map((commit) => (
-              <TimelineEntry
-                key={`${projectId}:${commit.id}`}
-                projectId={projectId}
-                previewRevision={previewRevision}
-                commit={commit}
-                path={scopedPaths?.[commit.id]}
-                selected={commit.id === selectedId}
-                comparisonCandidate={comparisonCandidates?.includes(commit.id)}
-                onSelect={() => onSelect(commit.id)}
-              />
+              <div className="timeline-row" key={`${projectId}:${commit.id}`}>
+                <TimelineEntry
+                  projectId={projectId}
+                  commit={commit}
+                  selected={commit.id === selectedId}
+                  comparisonCandidate={comparisonCandidates?.includes(
+                    commit.id,
+                  )}
+                  onSelect={() => onSelect(commit.id)}
+                />
+                {onEdit && (
+                  <button
+                    type="button"
+                    className="quiet-button timeline-edit"
+                    aria-label={`Edit version details for ${commit.title}`}
+                    title="Edit title and notes"
+                    disabled={editDisabled || comparisonCandidates !== null}
+                    onClick={() => onEdit(commit)}
+                  >
+                    <svg
+                      className="icon"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.65"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="m15 5 4 4M4 20l4.5-1 12-12-3.5-3.5-12 12L4 20Z" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -86,17 +92,13 @@ export function HistoryTimeline({
 
 function TimelineEntry({
   projectId,
-  previewRevision,
   commit,
-  path,
   selected,
   comparisonCandidate,
   onSelect,
 }: {
   projectId: string;
-  previewRevision: number;
   commit: CommitSummary;
-  path?: string;
   selected: boolean;
   comparisonCandidate?: boolean;
   onSelect: () => void;
@@ -110,13 +112,7 @@ function TimelineEntry({
       onClick={onSelect}
       title={commit.title}
     >
-      <TimelineThumbnail
-        key={`${previewRevision}:${path ?? ""}`}
-        projectId={projectId}
-        commit={commit}
-        path={path}
-        previewRevision={previewRevision}
-      />
+      <TimelineThumbnail projectId={projectId} commit={commit} />
       <span className="timeline-copy">
         <span className="timeline-title">{commit.title}</span>
         <span className="timeline-meta">
@@ -127,10 +123,7 @@ function TimelineEntry({
             {kindName(commit.kind)}
           </span>
         </span>
-        <span className="timeline-note">
-          {commit.note ||
-            `${commit.fileCount} tracked file${commit.fileCount === 1 ? "" : "s"}`}
-        </span>
+        {commit.note && <span className="timeline-note">{commit.note}</span>}
       </span>
     </button>
   );
@@ -139,13 +132,9 @@ function TimelineEntry({
 function TimelineThumbnail({
   projectId,
   commit,
-  path,
-  previewRevision,
 }: {
   projectId: string;
   commit: CommitSummary;
-  path?: string;
-  previewRevision: number;
 }) {
   const containerRef = useRef<HTMLSpanElement>(null);
   const [thumbnail, setThumbnail] = useState<CommitThumbnail | null>();
@@ -159,7 +148,7 @@ function TimelineThumbnail({
       if (requested) return;
       requested = true;
       void artlog
-        .getCommitThumbnail(projectId, commit.id, path)
+        .getCommitThumbnail(projectId, commit.id)
         .then((preview) => {
           if (active) setThumbnail(preview);
         })
@@ -190,7 +179,7 @@ function TimelineThumbnail({
       active = false;
       observer?.disconnect();
     };
-  }, [projectId, commit.id, previewRevision, path]);
+  }, [projectId, commit.id]);
 
   return (
     <span className="timeline-thumbnail" ref={containerRef}>
@@ -222,27 +211,24 @@ function TimelineThumbnail({
 
 export function VersionDetail({
   commit,
-  files,
-  selectedPath,
+  file,
+  loading,
   busy,
-  canReplace = true,
-  onSelectPath,
+  canReplace,
   onRestoreCopy,
   onRestoreInPlace,
   children,
 }: {
   commit: CommitSummary;
-  files: FileVersion[];
-  selectedPath: string;
+  file: FileVersion | null;
+  loading: boolean;
   busy: boolean;
-  canReplace?: boolean;
-  onSelectPath: (path: string) => void;
+  canReplace: boolean;
   onRestoreCopy: () => void;
   onRestoreInPlace: () => void;
   children?: ReactNode;
 }) {
   const date = formatDate(commit.timestamp);
-  const onlyFile = files.length === 1 ? files[0] : null;
   return (
     <section className="version-card">
       <div className="version-content">
@@ -256,12 +242,12 @@ export function VersionDetail({
           <time dateTime={commit.timestamp} title={date.full}>
             {date.day} · {date.time}
           </time>
-          {onlyFile && (
-            <span className="version-meta-file" title={onlyFile.path}>
+          {file && (
+            <span className="version-meta-file" title={file.path}>
               <Icon name="file" />
-              <bdi className="version-file-name">{onlyFile.path}</bdi>
+              <bdi className="version-file-name">{file.path}</bdi>
               <span className="version-file-size">
-                {formatBytes(onlyFile.size)}
+                {formatBytes(file.size)}
               </span>
             </span>
           )}
@@ -272,38 +258,20 @@ export function VersionDetail({
             <span>{commit.note}</span>
           </p>
         )}
-        {files.length === 0 ? (
-          <p className="version-empty">No tracked files in this snapshot.</p>
-        ) : !onlyFile ? (
-          <div
-            className="version-files"
-            role="group"
-            aria-label="Files in this version"
-          >
-            {files.map((file) => (
-              <button
-                className="version-file"
-                key={file.path}
-                aria-pressed={selectedPath === file.path}
-                onClick={() => onSelectPath(file.path)}
-                title={file.path}
-              >
-                <Icon name="file" />
-                <span className="version-file-name">{file.path}</span>
-                <span className="version-file-size">
-                  {formatBytes(file.size)}
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : null}
+        {!file && (
+          <p className="version-empty" role={loading ? "status" : undefined}>
+            {loading
+              ? "Loading version…"
+              : "This version has no saved copy of the file."}
+          </p>
+        )}
       </div>
       {children}
       <div className="restore-actions">
-        {isClipFile(selectedPath) && canReplace && (
+        {file && canReplace && (
           <button
             className="quiet-button restore-place"
-            disabled={busy || !selectedPath}
+            disabled={busy || !file}
             onClick={onRestoreInPlace}
           >
             Replace working file…
@@ -311,7 +279,7 @@ export function VersionDetail({
         )}
         <button
           className="primary-button restore-copy"
-          disabled={busy || !selectedPath}
+          disabled={busy || !file}
           onClick={onRestoreCopy}
         >
           Restore as a copy

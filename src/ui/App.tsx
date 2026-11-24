@@ -1,43 +1,31 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { artlog } from "../api";
 import type {
   CaptureStatus,
-  ComparisonVersion,
+  CommitSummary,
   FileVersion,
   ProjectFile,
-  ProjectSummary,
   ProjectView,
   RepackMode,
   RepositoryHealth,
   RestoreOutcome,
-  ScanEntry,
   Settings,
-  TrashItem,
   ViewName,
 } from "../types";
 import { Icon } from "./Icon";
-import {
-  FilesView,
-  ProjectOptions,
-  SettingsView,
-  type FileActions,
-} from "./ProjectSettings";
+import { ProjectOptions, SettingsView } from "./ProjectSettings";
 import { HistoryTimeline, VersionDetail } from "./History";
 import { PreviewComparison } from "./PreviewComparison";
-import { ProjectChoices, RecentProjects, Welcome } from "./ProjectEntry";
+import { RecentProjects, Welcome } from "./ProjectEntry";
 import {
   readRecentProjects,
   rememberRecentProject,
   writeRecentProjects,
 } from "./recent-projects";
-import {
-  ConfirmationDialog,
-  TrashView,
-  type ManagementAction,
-} from "./ProjectManagement";
-import { errorMessage, fileName, isClipFile } from "./format";
+import { DeleteHistoryDialog } from "./ProjectManagement";
+import { errorMessage, fileName } from "./format";
 
 function statusName(status: CaptureStatus["state"]): string {
   return (
@@ -66,25 +54,13 @@ export default function App() {
   } | null>(null);
   const [view, setView] = useState<ViewName>("history");
   const [selectedId, setSelectedId] = useState("");
-  const [selectedFiles, setSelectedFiles] = useState<FileVersion[]>([]);
-  const [workingFiles, setWorkingFiles] = useState<ScanEntry[]>([]);
-  const [selectedPath, setSelectedPath] = useState("");
-  const [launcher, setLauncher] = useState(false);
-  const [folderChoice, setFolderChoice] = useState<{
-    root: string;
-    projects: ProjectSummary[] | null;
+  const [versionFile, setVersionFile] = useState<{
+    projectId: string;
+    versionId: string;
+    file: FileVersion | null;
   } | null>(null);
-  const [trashRoot, setTrashRoot] = useState("");
-  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
-  const [trashLoading, setTrashLoading] = useState(false);
-  const [management, setManagement] = useState<
-    (ManagementAction & { id?: string }) | null
-  >(null);
-  const [managementError, setManagementError] = useState("");
-  const [historyFile, setHistoryFile] = useState<ProjectFile | null>(null);
-  const [fileHistory, setFileHistory] = useState<ComparisonVersion[] | null>(
-    null,
-  );
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [settingsDraft, setSettingsDraft] = useState<Settings | null>(null);
   const [health, setHealth] = useState<RepositoryHealth | null>(null);
   const [healthState, setHealthState] = useState<"idle" | "loading" | "error">(
@@ -95,10 +71,12 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [checkpointOpen, setCheckpointOpen] = useState(false);
-  const [checkpointTitle, setCheckpointTitle] = useState("");
-  const [checkpointNote, setCheckpointNote] = useState("");
-  const [previewRevision, setPreviewRevision] = useState(0);
+  const [editingVersion, setEditingVersion] = useState<{
+    id: string;
+    title: string;
+    note: string;
+  } | null>(null);
+  const [editError, setEditError] = useState("");
   const [restoreTarget, setRestoreTarget] = useState<{
     id: string;
     file: FileVersion;
@@ -108,34 +86,24 @@ export default function App() {
     null,
   );
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const checkpointDialogRef = useRef<HTMLDialogElement>(null);
+  const editDialogRef = useRef<HTMLDialogElement>(null);
   const projectSnapshotRef = useRef<ProjectView | null>(null);
   projectSnapshotRef.current = project;
 
-  const timelineCommits = useMemo(
-    () =>
-      historyFile
-        ? (project?.commits.filter((commit) =>
-            fileHistory?.some((file) => file.id === commit.id),
-          ) ?? [])
-        : (project?.commits ?? []),
-    [project, historyFile, fileHistory],
-  );
-  const scopedPaths = useMemo(
-    () =>
-      fileHistory
-        ? Object.fromEntries(fileHistory.map(({ id, path }) => [id, path]))
-        : undefined,
-    [fileHistory],
-  );
-  const selectedCommit = useMemo(
-    () =>
-      timelineCommits.find((commit) => commit.id === selectedId) ??
-      timelineCommits[0] ??
-      null,
-    [timelineCommits, selectedId],
-  );
-  const selectedFile = selectedFiles.find((item) => item.path === selectedPath);
+  const timelineCommits = project?.commits ?? [];
+  const selectedCommit =
+    timelineCommits.find((commit) => commit.id === selectedId) ??
+    timelineCommits[0] ??
+    null;
+  const workingPath = project?.project.path ?? "";
+  const workingFile = project?.files.find((file) => file.path === workingPath);
+  const workingFileId = workingFile?.id;
+  const selectedCommitId = selectedCommit?.id;
+  const selectedVersionReady =
+    versionFile?.projectId === project?.id &&
+    versionFile?.versionId === selectedCommitId &&
+    versionFile !== null;
+  const selectedFile = selectedVersionReady ? versionFile.file : null;
 
   useEffect(() => {
     writeRecentProjects(recentProjects);
@@ -162,15 +130,6 @@ export default function App() {
     [projectId],
   );
 
-  const loadProjectFiles = useCallback(async (id: string) => {
-    try {
-      const files = await artlog.projectFiles(id);
-      if (projectSnapshotRef.current?.id === id) setWorkingFiles(files);
-    } catch (cause) {
-      if (projectSnapshotRef.current?.id === id) setError(errorMessage(cause));
-    }
-  }, []);
-
   async function checkRepositoryHealth(id: string) {
     setHealthState("loading");
     setHealthError("");
@@ -194,15 +153,7 @@ export default function App() {
     setProject(next);
     setSettingsDraft(next.settings);
     setSelectedId(next.commits[0]?.id ?? "");
-    setSelectedFiles([]);
-    setPreviewRevision(0);
-    setSelectedPath("");
-    setHistoryFile(null);
-    setFileHistory(null);
-    setWorkingFiles([]);
-    setFolderChoice(null);
-    setTrashRoot("");
-    setLauncher(false);
+    setVersionFile(null);
     setView("history");
     setCapture(next.capture ?? null);
     setHealth(null);
@@ -218,7 +169,6 @@ export default function App() {
     try {
       const next = await operation();
       installProject(next);
-      await loadProjectFiles(next.id);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -228,28 +178,6 @@ export default function App() {
 
   const openInContainer = (root: string, id: string) =>
     activate(() => artlog.openContainerProject(root, id));
-
-  async function chooseProject() {
-    setError("");
-    try {
-      const path = await open({
-        directory: true,
-        multiple: false,
-        title: "Browse saved ArtLog histories",
-      });
-      if (typeof path !== "string") return;
-      setBusy(true);
-      setFolderChoice({ root: path, projects: null });
-      setFolderChoice({
-        root: path,
-        projects: await artlog.listProjects(path),
-      });
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function chooseClip() {
     setError("");
@@ -268,40 +196,6 @@ export default function App() {
       setBusy(false);
     }
   }
-
-  async function showTrash(root: string) {
-    setTrashRoot(root);
-    setTrashItems([]);
-    setTrashLoading(true);
-    setError("");
-    try {
-      setTrashItems(await artlog.listTrash(root));
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setTrashLoading(false);
-    }
-  }
-
-  const activeHead = project?.commits[0]?.id;
-  useEffect(() => {
-    if (!projectId || !historyFile) return;
-    let active = true;
-    void artlog
-      .comparisonVersions(projectId, historyFile.path, historyFile.id)
-      .then((versions) => {
-        if (active) setFileHistory(versions);
-      })
-      .catch((cause) => {
-        if (active) {
-          setFileHistory([]);
-          setError(errorMessage(cause));
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [projectId, historyFile, activeHead]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -343,12 +237,8 @@ export default function App() {
                   }
                 : draft,
             );
-            setHistoryFile((file) =>
-              file?.path === previousPath ? { ...file, path: newPath } : file,
-            );
           }
           setCapture(state.capture);
-          void loadProjectFiles(projectId);
         }
       } catch (cause) {
         if (active && projectSnapshotRef.current?.id === projectId) {
@@ -400,38 +290,40 @@ export default function App() {
       unsubProject?.();
     };
     // Events are best-effort; this small state check is the fallback.
-  }, [projectId, refreshProject, loadProjectFiles]);
+  }, [projectId, refreshProject]);
 
-  const selectedCommitId = selectedCommit?.id;
-  const preferredPath = selectedCommitId
-    ? scopedPaths?.[selectedCommitId]
-    : undefined;
   useEffect(() => {
-    if (!projectId || !selectedCommitId) {
-      setSelectedFiles([]);
-      setSelectedPath("");
-      return;
-    }
+    if (!projectId || !selectedCommitId) return;
     let active = true;
-    setError("");
     void artlog
       .commitFiles(projectId, selectedCommitId)
       .then((files) => {
         if (!active) return;
-        setSelectedFiles(files);
-        setSelectedPath(
-          (current) =>
-            preferredPath ??
-            (files.some((file) => file.path === current)
-              ? current
-              : (files[0]?.path ?? "")),
-        );
+        const file =
+          files.find(
+            (item) => workingFileId && item.fileId === workingFileId,
+          ) ??
+          files.find(
+            (item) =>
+              item.path === workingPath && (!workingFileId || !item.fileId),
+          ) ??
+          null;
+        setVersionFile({ projectId, versionId: selectedCommitId, file });
       })
-      .catch((cause) => active && setError(errorMessage(cause)));
+      .catch((cause) => {
+        if (active) {
+          setVersionFile({
+            projectId,
+            versionId: selectedCommitId,
+            file: null,
+          });
+          setError(errorMessage(cause));
+        }
+      });
     return () => {
       active = false;
     };
-  }, [projectId, selectedCommitId, preferredPath]);
+  }, [projectId, selectedCommitId, workingFileId, workingPath]);
 
   useEffect(() => {
     if (!restoreTarget) {
@@ -441,39 +333,41 @@ export default function App() {
     if (!dialogRef.current?.open) dialogRef.current?.showModal();
   }, [restoreTarget]);
 
+  const editing = editingVersion !== null;
   useEffect(() => {
-    const dialog = checkpointDialogRef.current;
+    const dialog = editDialogRef.current;
     if (!dialog) return;
-    if (checkpointOpen && !dialog.open) dialog.showModal();
-    if (!checkpointOpen && dialog.open) dialog.close();
-  }, [checkpointOpen]);
+    if (editing && !dialog.open) dialog.showModal();
+    if (!editing && dialog.open) dialog.close();
+  }, [editing]);
 
-  function closeCheckpoint() {
-    setCheckpointOpen(false);
-    setError("");
+  function editVersion(commit: CommitSummary) {
+    setEditError("");
+    setEditingVersion({
+      id: commit.id,
+      title: commit.title,
+      note: commit.note,
+    });
   }
 
-  async function makeCheckpoint(event: React.FormEvent<HTMLFormElement>) {
+  async function saveVersionDetails(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!project || busy || !checkpointTitle.trim()) return;
+    if (!project || !editingVersion || busy || !editingVersion.title.trim())
+      return;
     setBusy(true);
-    setError("");
+    setEditError("");
     try {
-      const next = await artlog.createCheckpoint(
+      const { id, title, note } = editingVersion;
+      const next = await artlog.updateVersionDetails(
         project.id,
-        checkpointTitle.trim(),
-        checkpointNote.trim(),
+        id,
+        title,
+        note,
       );
       setProject(next);
-      setSettingsDraft(next.settings);
-      setSelectedId(next.commits[0]?.id ?? "");
-      await loadProjectFiles(next.id);
-      setCheckpointTitle("");
-      setCheckpointNote("");
-      setCheckpointOpen(false);
-      setNotice("Checkpoint saved.");
+      setEditingVersion(null);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setEditError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
@@ -571,16 +465,6 @@ export default function App() {
     });
   }
 
-  function toggleTracked(path: string) {
-    if (!settingsDraft) return;
-    setSettingsDraft({
-      ...settingsDraft,
-      tracked: settingsDraft.tracked.includes(path)
-        ? settingsDraft.tracked.filter((item) => item !== path)
-        : [...settingsDraft.tracked, path],
-    });
-  }
-
   async function restoreAsCopy(commitId: string, file: FileVersion) {
     if (!project) return;
     setError("");
@@ -635,8 +519,7 @@ export default function App() {
       setRestoreTarget(null);
       setRestoreConfirmed(false);
       try {
-        const next = await refreshProject();
-        if (next) await loadProjectFiles(next.id);
+        await refreshProject();
       } catch (cause) {
         setError((current) =>
           current ? `${current}\n${errorMessage(cause)}` : errorMessage(cause),
@@ -653,9 +536,6 @@ export default function App() {
       await artlog.closeProject();
       projectSnapshotRef.current = null;
       setProject(null);
-      setFolderChoice(null);
-      setTrashRoot("");
-      setLauncher(false);
       setCapture(null);
       setHealth(null);
       setNotice("");
@@ -665,11 +545,6 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }
-
-  function ask(action: ManagementAction & { id?: string }) {
-    setManagementError("");
-    setManagement(action);
   }
 
   async function updateProject(
@@ -685,7 +560,6 @@ export default function App() {
       setProject(next);
       setSettingsDraft(next.settings);
       setCapture(next.capture ?? null);
-      await loadProjectFiles(next.id);
       setNotice(message);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -713,112 +587,34 @@ export default function App() {
     }
   }
 
-  async function confirmManagement(typed: string) {
-    if (!management || busy) return;
-    const { kind, id } = management;
-    const root = management.location;
+  async function deleteHistory(typed: string) {
+    if (!project || !confirmDelete || busy) return;
     setBusy(true);
-    setManagementError("");
+    setDeleteError("");
     try {
-      if (kind === "purge" && id) {
-        await artlog.purgeTrash(root, id, typed);
-        setTrashItems((items) => items.filter((item) => item.id !== id));
-      } else if (kind === "restoreTrash" && id) {
-        const item = trashItems.find((entry) => entry.id === id);
-        const next = await artlog.restoreTrash(root, id);
-        installProject(next);
-        setNotice(
-          item?.projectId === next.project.id
-            ? "History restored from trash."
-            : "History restored from trash as a separate project.",
-        );
-        await loadProjectFiles(next.id);
-      } else if (project && kind === "removeProject") {
-        await artlog.removeProject(project.id, typed);
-        setRecentProjects((items) =>
-          items.filter(
-            (item) =>
-              item.root !== project.root || item.id !== project.project.id,
-          ),
-        );
-        projectSnapshotRef.current = null;
-        setProject(null);
-        setCapture(null);
-        setNotice("");
-        await showTrash(root);
-      } else if (project && kind === "deleteFile" && id) {
-        const next = await artlog.deleteFileHistory(project.id, id, typed);
-        installProject(next);
-        setView(view);
-        setNotice("File history moved to ArtLog trash.");
-        await loadProjectFiles(next.id);
-      } else if (project && kind === "stop" && id) {
-        const next = await artlog.stopTracking(project.id, id);
-        setProject(next);
-        setSettingsDraft(next.settings);
-        setCapture(next.capture ?? null);
-        setNotice("Tracking stopped. Saved versions are available in History.");
-      }
-      setManagement(null);
+      await artlog.deleteHistory(project.id, typed);
+      setRecentProjects((items) =>
+        items.filter(
+          (item) =>
+            item.root !== project.root || item.id !== project.project.id,
+        ),
+      );
+      projectSnapshotRef.current = null;
+      setProject(null);
+      setCapture(null);
+      setError("");
+      setNotice(`Deleted history for ${workingPath}.`);
+      setConfirmDelete(false);
     } catch (cause) {
-      setManagementError(errorMessage(cause));
-      if (kind === "purge") {
-        void artlog
-          .listTrash(root)
-          .then(setTrashItems)
-          .catch(() => {});
-      }
+      setDeleteError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
   }
 
-  const fileActions: FileActions = {
-    viewHistory: (file) => {
-      setFileHistory(null);
-      setHistoryFile(file);
-      setView("history");
-    },
-    stopTracking: (file) => {
-      if (project)
-        ask({
-          kind: "stop",
-          id: file.id,
-          subject: file.path,
-          location: project.root,
-        });
-    },
-    deleteHistory: (file) => {
-      if (project)
-        ask({
-          kind: "deleteFile",
-          id: file.id,
-          subject: file.path,
-          location: project.root,
-          required: fileName(file.path),
-        });
-    },
-    relink: (file) => void relink(file),
-  };
-
-  const askTrash = (kind: "restoreTrash" | "purge", item: TrashItem) =>
-    ask({
-      kind,
-      id: item.id,
-      subject: item.filePath ?? item.projectName,
-      location: trashRoot,
-      required: kind === "purge" ? "DELETE" : undefined,
-      estimatedReclaim: kind === "purge" ? item.size : undefined,
-    });
-
-  const atProject = !!project && !launcher && !folderChoice && !trashRoot;
-  const atHome = (!project || launcher) && !folderChoice && !trashRoot;
   const comparisonScope =
-    atProject &&
-    view === "history" &&
-    selectedCommit &&
-    isClipFile(selectedPath)
-      ? JSON.stringify([project.id, selectedCommit.id, selectedPath])
+    project && view === "history" && selectedCommit && selectedFile
+      ? JSON.stringify([project.id, selectedCommit.id, selectedFile.path])
       : null;
   const activePicker =
     timelinePicker?.scope === comparisonScope ? timelinePicker : null;
@@ -841,6 +637,7 @@ export default function App() {
 
   function selectTimelineEntry(id: string) {
     if (!activePicker) {
+      setError("");
       setSelectedId(id);
     } else if (activePicker.eligibleIds.includes(id)) {
       setTimelinePicker({ ...activePicker, pick: { id } });
@@ -861,97 +658,54 @@ export default function App() {
   )?.id;
 
   return (
-    <main className="app-shell">
-      <header
-        className={`topbar${atProject ? " project-topbar" : " entry-topbar"}`}
-      >
-        <span className="brand-mark">
-          {!atHome && <Icon name="brand" />}
-          ArtLog
-        </span>
-        {project && atProject ? (
-          <>
-            <h1 className="project-title" aria-label={project.name}>
-              <button
-                className="project-picker"
-                aria-label={`Open another project. Current project: ${project.name}`}
-                aria-describedby="active-project-location"
-                title={project.root}
-                onClick={() => {
-                  setError("");
-                  setLauncher(true);
-                }}
-                disabled={busy}
-              >
-                <Icon
-                  name={
-                    project.project.mode === "singleFile" ? "file" : "folder"
-                  }
-                />
-                <span>{project.name}</span>
-                <Icon name="chevron" />
-              </button>
-            </h1>
-            <span id="active-project-location" className="sr-only">
-              {project.root}
-            </span>
-            <div className="topbar-right">
-              <span
-                className={`capture-pill state-${captureState}`}
-                role="status"
-                title={capture?.message || undefined}
-              >
-                <span className="capture-indicator">
-                  <Icon
-                    name={
-                      captureState === "current"
-                        ? "check"
-                        : captureState === "paused"
-                          ? "pause"
-                          : captureState === "error"
-                            ? "warning"
-                            : "history"
-                    }
-                  />
-                </span>
-                {statusName(captureState)}
-              </span>
-              {view === "history" && (
-                <button
-                  className="primary-button compact-button"
-                  disabled={
-                    busy ||
-                    !!project.openWarning ||
-                    project.recoveryPaths.length > 0
-                  }
-                  onClick={() => {
-                    setCheckpointOpen(true);
-                    setError("");
-                  }}
-                >
-                  New checkpoint
-                </button>
-              )}
-            </div>
-          </>
-        ) : project ? (
+    <main className={`app-shell${!project ? " home-shell" : ""}`}>
+      {project && (
+        <header className="topbar project-topbar">
           <button
-            className="quiet-button"
+            type="button"
+            className="brand-mark quiet-button home-button"
+            aria-label="ArtLog home"
             disabled={busy}
-            onClick={closeProject}
+            onClick={() => void closeProject()}
           >
-            Close project
+            <Icon name="brand" />
+            ArtLog
           </button>
-        ) : null}
-      </header>
+          <h1
+            className="project-title"
+            title={joinPath(project.root, workingPath)}
+          >
+            <bdi>{workingPath}</bdi>
+          </h1>
+          <span
+            className={`capture-pill state-${captureState}`}
+            role="status"
+            title={capture?.message || undefined}
+          >
+            <span className="capture-indicator">
+              <Icon
+                name={
+                  captureState === "current"
+                    ? "check"
+                    : captureState === "paused"
+                      ? "pause"
+                      : captureState === "error"
+                        ? "warning"
+                        : "history"
+                }
+              />
+            </span>
+            {statusName(captureState)}
+          </span>
+        </header>
+      )}
 
-      {atProject && (
+      {project ? (
         <aside className="project-rail">
           <nav className="project-nav" aria-label="Project views">
             {(
               [
                 ["history", "History", "history"],
-                ["files", "Files", "folder"],
                 ["settings", "Settings", "settings"],
               ] as const
             ).map(([destination, label, icon]) => (
@@ -961,29 +715,15 @@ export default function App() {
                   view === destination ? "nav-button active" : "nav-button"
                 }
                 aria-current={view === destination ? "page" : undefined}
-                onClick={() => {
-                  if (destination === "history") {
-                    setHistoryFile(null);
-                    setFileHistory(null);
-                  }
-                  setView(destination);
-                }}
+                onClick={() => setView(destination)}
               >
                 <Icon name={icon} />
                 <span>{label}</span>
               </button>
             ))}
           </nav>
-          <button
-            className="quiet-button close-project"
-            disabled={busy}
-            onClick={closeProject}
-          >
-            Close project
-          </button>
         </aside>
-      )}
-      {atHome && (
+      ) : (
         <aside className="home-rail">
           <RecentProjects
             projects={recentProjects}
@@ -994,51 +734,17 @@ export default function App() {
       )}
 
       <section className="workspace">
-        {trashRoot ? (
-          <TrashView
-            root={trashRoot}
-            items={trashItems}
-            loading={trashLoading}
-            error={error}
-            busy={busy}
-            onBack={() => {
-              setTrashRoot("");
-              setError("");
-            }}
-            onRetry={() => void showTrash(trashRoot)}
-            onRestore={(item) => askTrash("restoreTrash", item)}
-            onPurge={(item) => askTrash("purge", item)}
-          />
-        ) : folderChoice ? (
-          <ProjectChoices
-            root={folderChoice.root}
-            projects={folderChoice.projects}
-            busy={busy}
-            error={error}
-            onOpen={(id) => void openInContainer(folderChoice.root, id)}
-            onTrash={() => void showTrash(folderChoice.root)}
-            onBack={() => {
-              setFolderChoice(null);
-              setError("");
-            }}
-          />
-        ) : !project || launcher ? (
+        {!project ? (
           <Welcome
             busy={busy}
             error={error}
-            onChooseProject={chooseProject}
+            notice={notice}
             onChooseClip={chooseClip}
-            onCancel={
-              project
-                ? () => {
-                    setLauncher(false);
-                    setError("");
-                  }
-                : undefined
-            }
           />
         ) : (
-          <div className="project-view-shell">
+          <div
+            className={`project-view-shell${view === "history" ? " history-workspace" : ""}`}
+          >
             {notice && (
               <div className="notice-banner" role="status">
                 <span>✓</span>
@@ -1073,15 +779,10 @@ export default function App() {
                 </button>
               </div>
             )}
-            {error && !checkpointOpen && (
+            {error && (
               <div className="error-message project-error" role="alert">
                 {error}
               </div>
-            )}
-            {project.openWarning && (
-              <p className="error-message project-error" role="alert">
-                {project.openWarning}
-              </p>
             )}
             {project.recoveryPaths.length > 0 && (
               <section
@@ -1094,7 +795,7 @@ export default function App() {
                   <p>
                     Keep these files until you verify your work. See the
                     recovery record for the temporary folder and safety
-                    checkpoint.
+                    snapshot.
                   </p>
                   {project.recoveryPaths.map((path) => (
                     <code className="recovery-path" key={path}>
@@ -1115,7 +816,7 @@ export default function App() {
                       setSelectedId(recoverySafetyId);
                     }}
                   >
-                    View safety checkpoint
+                    View safety snapshot
                   </button>
                 )}
               </section>
@@ -1127,22 +828,12 @@ export default function App() {
                 <div className="history-layout">
                   <HistoryTimeline
                     projectId={project.id}
-                    previewRevision={previewRevision}
                     commits={timelineCommits}
-                    scopedPaths={scopedPaths}
-                    scopeName={historyFile?.path}
-                    loadingScope={historyFile !== null && fileHistory === null}
-                    onClearScope={
-                      historyFile
-                        ? () => {
-                            setHistoryFile(null);
-                            setFileHistory(null);
-                          }
-                        : undefined
-                    }
                     selectedId={selectedCommit?.id ?? ""}
                     comparisonCandidates={activePicker?.eligibleIds ?? null}
                     onSelect={selectTimelineEntry}
+                    onEdit={editVersion}
+                    editDisabled={busy}
                   />
                   <section
                     className="version-panel"
@@ -1151,62 +842,38 @@ export default function App() {
                     {selectedCommit ? (
                       <VersionDetail
                         commit={selectedCommit}
-                        files={selectedFiles}
-                        selectedPath={selectedPath}
+                        file={selectedFile}
+                        loading={!selectedVersionReady}
                         busy={busy}
                         canReplace={
-                          !project.openWarning &&
                           project.recoveryPaths.length === 0 &&
-                          (selectedFile?.fileId
-                            ? project.files.some(
-                                (file) =>
-                                  file.id === selectedFile.fileId &&
-                                  file.path === selectedPath &&
-                                  file.tracked &&
-                                  file.present,
-                              )
-                            : project.settings.tracked.includes(selectedPath))
+                          !!workingFile?.present &&
+                          workingFile.tracked &&
+                          selectedFile?.path === workingPath &&
+                          (!selectedFile?.fileId ||
+                            selectedFile.fileId === workingFileId)
                         }
-                        onSelectPath={setSelectedPath}
                         onRestoreCopy={() => {
-                          const file = selectedFiles.find(
-                            (item) => item.path === selectedPath,
-                          );
-                          if (file) void restoreAsCopy(selectedCommit.id, file);
+                          if (selectedFile)
+                            void restoreAsCopy(selectedCommit.id, selectedFile);
                         }}
                         onRestoreInPlace={() => {
-                          const file = selectedFiles.find(
-                            (item) => item.path === selectedPath,
-                          );
-                          if (file) openRestore(selectedCommit.id, file);
+                          if (selectedFile)
+                            openRestore(selectedCommit.id, selectedFile);
                         }}
                       >
-                        {isClipFile(selectedPath) ? (
+                        {selectedFile && (
                           <PreviewComparison
                             key={comparisonScope}
                             projectId={project.id}
                             currentCommit={selectedCommit}
                             commits={project.commits}
-                            path={selectedPath}
-                            fileId={selectedFile?.fileId}
+                            path={selectedFile.path}
+                            fileId={selectedFile.fileId}
                             onTimelinePickerChange={updateTimelinePicker}
                             timelinePick={activePicker?.pick ?? null}
-                            onPreviewChange={() =>
-                              setPreviewRevision((revision) => revision + 1)
-                            }
                           />
-                        ) : selectedPath ? (
-                          <section
-                            className="archived-file"
-                            aria-label="Archived file"
-                          >
-                            <h4>Archived file</h4>
-                            <p>
-                              Use Restore as a copy to recover this file from an
-                              earlier ArtLog project.
-                            </p>
-                          </section>
-                        ) : null}
+                        )}
                       </VersionDetail>
                     ) : (
                       <div className="detail-empty">
@@ -1226,16 +893,6 @@ export default function App() {
               </>
             )}
 
-            {view === "files" && (
-              <FilesView
-                project={project}
-                files={workingFiles}
-                onGoSettings={() => setView("settings")}
-                actions={fileActions}
-                busy={busy}
-              />
-            )}
-
             {view === "settings" && settingsDraft && (
               <>
                 <SettingsView
@@ -1245,16 +902,13 @@ export default function App() {
                   healthState={healthState}
                   healthError={healthError}
                   busy={busy}
-                  files={workingFiles}
                   onChange={setSettingsDraft}
-                  onToggle={toggleTracked}
                   onSave={(event) => void saveProjectSettings(event)}
                   onCheckHealth={() => void checkRepositoryHealth(project.id)}
                   onCompression={(enabled) =>
                     void toggleHistoryCompression(project.id, enabled)
                   }
                   onRepack={(mode) => void repackHistory(project.id, mode)}
-                  actions={fileActions}
                 />
                 <ProjectOptions
                   key={`${project.id}:${project.name}`}
@@ -1266,66 +920,76 @@ export default function App() {
                       "Project renamed.",
                     )
                   }
-                  onRemove={() =>
-                    ask({
-                      kind: "removeProject",
-                      subject: project.name,
-                      location: project.root,
-                      required: project.name,
-                    })
-                  }
-                  onTrash={() => void showTrash(project.root)}
+                  workingFile={workingFile}
+                  onRelink={(file) => void relink(file)}
+                  onDelete={() => {
+                    setDeleteError("");
+                    setConfirmDelete(true);
+                  }}
                 />
               </>
             )}
           </div>
         )}
       </section>
-      <ConfirmationDialog
-        action={management}
+      <DeleteHistoryDialog
+        filename={confirmDelete ? workingPath : ""}
+        location={project?.root ?? ""}
         busy={busy}
-        error={managementError}
-        onCancel={() => setManagement(null)}
-        onConfirm={(typed) => void confirmManagement(typed)}
+        error={deleteError}
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={(typed) => void deleteHistory(typed)}
       />
 
       <dialog
-        ref={checkpointDialogRef}
+        ref={editDialogRef}
         className="app-dialog"
-        aria-labelledby="checkpoint-title"
+        aria-labelledby="edit-version-title"
         onCancel={(event) => {
           event.preventDefault();
-          if (!busy) closeCheckpoint();
+          if (!busy) setEditingVersion(null);
         }}
       >
-        {checkpointOpen && (
+        {editingVersion && (
           <form
-            className="checkpoint-form"
-            onSubmit={(event) => void makeCheckpoint(event)}
+            className="version-edit-form"
+            onSubmit={(event) => void saveVersionDetails(event)}
           >
-            <h2 id="checkpoint-title">New checkpoint</h2>
+            <h2 id="edit-version-title">Edit version details</h2>
             <label>
-              Checkpoint name
+              Version title
               <input
                 autoFocus
                 maxLength={100}
-                value={checkpointTitle}
-                onChange={(event) => setCheckpointTitle(event.target.value)}
+                value={editingVersion.title}
+                disabled={busy}
+                onChange={(event) =>
+                  setEditingVersion({
+                    ...editingVersion,
+                    title: event.target.value,
+                  })
+                }
                 required
               />
             </label>
             <label>
-              Note <span className="optional-label">(optional)</span>
+              Notes <span className="optional-label">(optional)</span>
               <textarea
                 maxLength={1000}
-                value={checkpointNote}
-                onChange={(event) => setCheckpointNote(event.target.value)}
+                value={editingVersion.note}
+                disabled={busy}
+                onChange={(event) =>
+                  setEditingVersion({
+                    ...editingVersion,
+                    note: event.target.value,
+                  })
+                }
                 rows={3}
               />
             </label>
-            {error && (
+            {editError && (
               <p className="error-message" role="alert">
-                {error}
+                {editError}
               </p>
             )}
             <div className="dialog-actions">
@@ -1333,15 +997,15 @@ export default function App() {
                 type="button"
                 className="secondary-button"
                 disabled={busy}
-                onClick={closeCheckpoint}
+                onClick={() => setEditingVersion(null)}
               >
                 Cancel
               </button>
               <button
                 className="primary-button"
-                disabled={busy || !checkpointTitle.trim()}
+                disabled={busy || !editingVersion.title.trim()}
               >
-                {busy ? "Saving…" : "Save checkpoint"}
+                {busy ? "Saving…" : "Save details"}
               </button>
             </div>
           </form>

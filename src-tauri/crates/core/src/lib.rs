@@ -12,6 +12,7 @@ const CHUNK_AVG: usize = 1024 * 1024;
 const CHUNK_MAX: usize = 4 * 1024 * 1024;
 const CHUNK_MASK: u64 = CHUNK_AVG as u64 - 1;
 const CAPTURE_ATTEMPTS: usize = 5;
+const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -1152,9 +1153,9 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
     }
     let mut b = Vec::new();
     open_source(path)
-        .and_then(|file| file.take(64 * 1024 * 1024 + 1).read_to_end(&mut b))
+        .and_then(|file| file.take(MAX_METADATA_BYTES as u64 + 1).read_to_end(&mut b))
         .map_err(|e| Error::io("read repository metadata", path, e))?;
-    if b.len() > 64 * 1024 * 1024 {
+    if b.len() > MAX_METADATA_BYTES {
         return Err(Error::Corrupt(format!(
             "Metadata is too large: {}",
             path.display()

@@ -100,11 +100,7 @@ describe("History thumbnails", () => {
       name: "Thumbnail of drawing.clip for Approved line art",
     });
     expect(image).toHaveAttribute("src", "data:image/png;base64,second");
-    expect(getThumbnail).toHaveBeenCalledExactlyOnceWith(
-      "project",
-      "second",
-      undefined,
-    );
+    expect(getThumbnail).toHaveBeenCalledExactlyOnceWith("project", "second");
     expect(
       screen.getByRole("img", {
         name: "Loading thumbnail for Initial snapshot",
@@ -156,8 +152,8 @@ describe("History thumbnails", () => {
       }),
     ).toHaveAttribute("src", "data:image/png;base64,new");
     expect(getThumbnail.mock.calls).toEqual([
-      ["old-project", "second", undefined],
-      ["new-project", "second", undefined],
+      ["old-project", "second"],
+      ["new-project", "second"],
     ]);
   });
 
@@ -179,40 +175,5 @@ describe("History thumbnails", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /approved line art/i }));
     expect(select).toHaveBeenCalledWith("second");
-  });
-
-  it("reloads a replaced preview while preserving the focused version button", async () => {
-    getThumbnail
-      .mockResolvedValueOnce(
-        thumbnail("drawing.clip", "data:image/png;base64,old"),
-      )
-      .mockResolvedValueOnce(
-        thumbnail("drawing.clip", "data:image/png;base64,replaced"),
-      );
-    const props = {
-      projectId: "project",
-      commits: commits.slice(0, 1),
-      selectedId: "second",
-      onSelect: vi.fn(),
-    };
-    const { rerender } = render(<HistoryTimeline {...props} />);
-    act(() => observers[0].show());
-    await screen.findByRole("img", {
-      name: "Thumbnail of drawing.clip for Approved line art",
-    });
-    const button = screen.getByRole("button", { name: /approved line art/i });
-    button.focus();
-
-    rerender(<HistoryTimeline {...props} previewRevision={1} />);
-    expect(button).toHaveFocus();
-    expect(
-      screen.queryByRole("img", { name: /thumbnail of drawing.clip/i }),
-    ).toBeNull();
-    act(() => observers[1].show());
-    expect(
-      await screen.findByRole("img", {
-        name: "Thumbnail of drawing.clip for Approved line art",
-      }),
-    ).toHaveAttribute("src", "data:image/png;base64,replaced");
   });
 });

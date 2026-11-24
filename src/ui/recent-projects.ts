@@ -17,7 +17,7 @@ function isRecentProject(value: unknown): value is RecentProject {
     typeof item.root === "string" &&
     typeof item.id === "string" &&
     typeof item.name === "string" &&
-    (item.mode === "folder" || item.mode === "singleFile")
+    item.mode === "singleFile"
   );
 }
 

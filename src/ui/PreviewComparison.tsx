@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { artlog } from "../api";
-import type { CommitSummary, Preview } from "../types";
-import { errorMessage, formatDate, isClipFile } from "./format";
+import type { CommitSummary, ComparisonVersion, Preview } from "../types";
+import { errorMessage, formatDate } from "./format";
 import { Icon } from "./Icon";
 import { createPixelDifference } from "./pixel-difference";
 import "./preview-comparison.css";
@@ -22,15 +21,6 @@ function usePreview(projectId: string, commitId: string, path: string) {
   const result =
     stored.key === key ? stored.result : { state: "loading" as const };
   const generation = useRef(0);
-  const activeKey = useRef(key);
-  const mounted = useRef(true);
-  activeKey.current = key;
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
   const [retry, setRetry] = useState(0);
   const update = useCallback(
     (next: PreviewLoad) => setStored({ key, result: next }),
@@ -61,34 +51,7 @@ function usePreview(projectId: string, commitId: string, path: string) {
       generation.current += 1;
     };
   }, [projectId, commitId, path, retry, update]);
-  const attach = async (imagePath: string) => {
-    const requestedKey = key;
-    if (!mounted.current || activeKey.current !== requestedKey) return;
-    const token = generation.current;
-    update({ state: "loading" });
-    try {
-      const preview = await artlog.attachPreview(
-        projectId,
-        commitId,
-        path,
-        imagePath,
-      );
-      if (
-        mounted.current &&
-        activeKey.current === requestedKey &&
-        generation.current === token
-      )
-        update({ state: "ready", preview });
-    } catch (cause) {
-      if (
-        mounted.current &&
-        activeKey.current === requestedKey &&
-        generation.current === token
-      )
-        update({ state: "error", message: errorMessage(cause) });
-    }
-  };
-  return { result, retry: () => setRetry((value) => value + 1), attach };
+  return { result, retry: () => setRetry((value) => value + 1) };
 }
 
 export function PreviewComparison({
@@ -97,7 +60,6 @@ export function PreviewComparison({
   commits,
   path,
   fileId,
-  onPreviewChange,
   onTimelinePickerChange,
   timelinePick,
 }: {
@@ -106,7 +68,6 @@ export function PreviewComparison({
   commits: CommitSummary[];
   path: string;
   fileId?: string | null;
-  onPreviewChange?: () => void;
   onTimelinePickerChange: (eligibleIds: string[] | null) => void;
   timelinePick: { id: string } | null;
 }) {
@@ -116,14 +77,20 @@ export function PreviewComparison({
     path: string;
   } | null>(null);
   const compareId = selection?.id ?? "";
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerArmed, setPickerArmed] = useState(false);
-  const [candidates, setCandidates] = useState<
-    (CommitSummary & { path: string })[] | null
-  >(null);
+  const [versionPaths, setVersionPaths] = useState<ComparisonVersion[]>([]);
   const [candidateState, setCandidateState] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle");
+    "loading" | "ready" | "error"
+  >("loading");
+  const candidates = useMemo(() => {
+    const pathsById = new Map(versionPaths.map(({ id, path }) => [id, path]));
+    return commits.flatMap((commit) => {
+      const path = pathsById.get(commit.id);
+      return path && commit.id !== currentCommit.id
+        ? [{ ...commit, path }]
+        : [];
+    });
+  }, [commits, currentCommit.id, versionPaths]);
   const [candidateError, setCandidateError] = useState("");
   const [candidateRetry, setCandidateRetry] = useState(0);
   const comparisonCommit = commits.find((commit) => commit.id === compareId);
@@ -151,7 +118,6 @@ export function PreviewComparison({
     "idle" | "loading" | "error"
   >("idle");
   const [differenceError, setDifferenceError] = useState("");
-  const [attachError, setAttachError] = useState("");
   const disarmPicker = useCallback(() => {
     setPickerArmed(false);
     onTimelinePickerChange(null);
@@ -181,24 +147,16 @@ export function PreviewComparison({
   const anyPreview =
     current.result.state === "ready" || comparison.result.state === "ready";
 
+  const historyHead = commits[0]?.id;
   useEffect(() => {
-    if (!pickerOpen) return;
     let active = true;
-    setCandidates(null);
     setCandidateState("loading");
     setCandidateError("");
     void artlog
       .comparisonVersions(projectId, path, fileId)
       .then((versions) => {
         if (!active) return;
-        setCandidates(
-          versions.flatMap(({ id, path }) => {
-            const commit =
-              id !== currentCommit.id &&
-              commits.find((commit) => commit.id === id);
-            return commit ? [{ ...commit, path }] : [];
-          }),
-        );
+        setVersionPaths(versions);
         setCandidateState("ready");
       })
       .catch((cause) => {
@@ -209,19 +167,11 @@ export function PreviewComparison({
     return () => {
       active = false;
     };
-  }, [
-    pickerOpen,
-    commits,
-    currentCommit.id,
-    projectId,
-    path,
-    fileId,
-    candidateRetry,
-  ]);
+  }, [projectId, path, fileId, historyHead, candidateRetry]);
 
   useEffect(() => {
     if (!pickerArmed) return;
-    onTimelinePickerChange(candidates?.map(({ id }) => id) ?? []);
+    onTimelinePickerChange(candidates.map(({ id }) => id));
   }, [pickerArmed, candidates, onTimelinePickerChange]);
 
   useEffect(() => {
@@ -245,7 +195,7 @@ export function PreviewComparison({
 
   useEffect(() => {
     if (!timelinePick) return;
-    const candidate = candidates?.find(({ id }) => id === timelinePick.id);
+    const candidate = candidates.find(({ id }) => id === timelinePick.id);
     if (candidate) chooseVersion(candidate);
   }, [timelinePick, candidates, chooseVersion]);
 
@@ -281,28 +231,6 @@ export function PreviewComparison({
       active = false;
     };
   }, [mode, sameDimensions, current.result, comparison.result]);
-
-  async function attachExport(
-    commit: CommitSummary,
-    pane: ReturnType<typeof usePreview>,
-  ) {
-    setAttachError("");
-    try {
-      const imagePath = await open({
-        title: `Attach a flattened export for ${commit.title} · ${path}`,
-        multiple: false,
-        filters: [
-          { name: "PNG or JPEG preview", extensions: ["png", "jpg", "jpeg"] },
-        ],
-      });
-      if (typeof imagePath === "string") {
-        await pane.attach(imagePath);
-        onPreviewChange?.();
-      }
-    } catch (cause) {
-      setAttachError(errorMessage(cause));
-    }
-  }
 
   function resetView() {
     setZoom(1);
@@ -370,13 +298,11 @@ export function PreviewComparison({
       zoomBy(event.deltaY < 0 ? 0.1 : -0.1);
     }
   }
+  const canCompare = candidates.length > 0;
+
   function toggleTimelinePicker() {
-    if (pickerArmed) {
-      disarmPicker();
-    } else {
-      setPickerOpen(true);
-      setPickerArmed(true);
-    }
+    if (pickerArmed) disarmPicker();
+    else if (canCompare) setPickerArmed(true);
   }
 
   return (
@@ -384,30 +310,53 @@ export function PreviewComparison({
       className="compare-panel"
       aria-label="Preview comparison"
       onKeyDownCapture={(event) => {
-        if (event.key !== "Escape" || (!pickerArmed && !pickerOpen)) return;
+        if (event.key !== "Escape" || !pickerArmed) return;
         event.preventDefault();
         event.stopPropagation();
-        if (pickerArmed) disarmPicker();
-        else setPickerOpen(false);
+        disarmPicker();
       }}
     >
-      <div className="section-heading compare-heading">
-        <h4>Compare versions</h4>
-        <button
-          className="text-button"
-          disabled={!path}
-          aria-expanded={pickerOpen}
-          onClick={() => {
-            const opening = !pickerOpen;
-            setPickerOpen(opening);
-            if (!opening) disarmPicker();
-            setCandidateState("idle");
-            setCandidates(null);
-            setCandidateError("");
-          }}
-        >
-          {pickerOpen ? "Close compare" : "Compare with another version…"}
-        </button>
+      <div className="compare-picker">
+        <label>
+          Previous version
+          <select
+            aria-label="Compare with version"
+            value={compareId}
+            disabled={!canCompare}
+            onChange={(event) => {
+              const candidate = candidates.find(
+                ({ id }) => id === event.target.value,
+              );
+              chooseVersion(candidate ?? null);
+            }}
+          >
+            <option value="">
+              {canCompare
+                ? "Choose a version"
+                : candidateState === "loading"
+                  ? "Finding versions…"
+                  : candidateState === "error"
+                    ? "Versions unavailable"
+                    : "No other versions"}
+            </option>
+            {candidates.map((commit) => (
+              <option key={commit.id} value={commit.id}>
+                {commit.title} · {formatDate(commit.timestamp).day}
+              </option>
+            ))}
+          </select>
+        </label>
+        {candidateState === "error" && (
+          <div className="compare-error" role="alert">
+            {candidateError}
+            <button
+              className="text-button"
+              onClick={() => setCandidateRetry((value) => value + 1)}
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </div>
       {comparisonCommit && (
         <div className="preview-controls-row">
@@ -468,7 +417,7 @@ export function PreviewComparison({
       )}
       {mode === "overlay" && sameDimensions && (
         <label className="opacity-control">
-          Selected version opacity{" "}
+          Current version opacity{" "}
           <input
             type="range"
             min="0"
@@ -479,58 +428,6 @@ export function PreviewComparison({
           <span>{opacity}%</span>
         </label>
       )}
-      {pickerOpen && (
-        <div className="compare-picker">
-          {candidateState === "loading" ? (
-            <span className="muted-caption">
-              Finding versions containing this file…
-            </span>
-          ) : candidateState === "error" ? (
-            <div className="compare-error" role="alert">
-              {candidateError}
-              <button
-                className="text-button"
-                onClick={() => {
-                  setCandidates(null);
-                  setCandidateState("idle");
-                  setCandidateRetry((value) => value + 1);
-                }}
-              >
-                Retry
-              </button>
-            </div>
-          ) : candidates?.length ? (
-            <label>
-              Previous version
-              <select
-                aria-label="Compare with version"
-                value={compareId}
-                onChange={(event) => {
-                  const candidate = candidates.find(
-                    ({ id }) => id === event.target.value,
-                  );
-                  chooseVersion(candidate ?? null);
-                }}
-              >
-                <option value="">Choose an earlier version</option>
-                {candidates.map((commit) => (
-                  <option key={commit.id} value={commit.id}>
-                    {commit.title} · {formatDate(commit.timestamp).day}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : candidateState === "ready" ? (
-            <span className="muted-caption">
-              No other version contains {path}.
-            </span>
-          ) : (
-            <span className="muted-caption">
-              Choose a version of this file to compare.
-            </span>
-          )}
-        </div>
-      )}
       {showsCombinedPreview && (
         <div className="compare-version-labels">
           <span title={comparisonCommit?.title}>
@@ -538,7 +435,7 @@ export function PreviewComparison({
             {comparisonCommit ? ` · ${comparisonCommit.title}` : ""}
           </span>
           <span title={currentCommit.title}>
-            Selected version · {currentCommit.title}
+            Current version · {currentCommit.title}
           </span>
         </div>
       )}
@@ -567,7 +464,7 @@ export function PreviewComparison({
             <img
               draggable={false}
               src={comparison.result.preview.dataUrl}
-              alt={`Earlier version of ${path}`}
+              alt={`Previous version of ${selection?.path ?? path}`}
             />
             <img
               draggable={false}
@@ -609,10 +506,6 @@ export function PreviewComparison({
             state={comparison.result}
             loading={comparison.result.state === "loading"}
             onRetry={comparison.retry}
-            onAttach={() =>
-              comparisonCommit &&
-              void attachExport(comparisonCommit, comparison)
-            }
             zoom={zoom}
             pan={pan}
             onKeyDown={onKeyDown}
@@ -621,16 +514,15 @@ export function PreviewComparison({
             onPointerUp={pointerUp}
             onWheel={wheel}
             pickerArmed={pickerArmed}
-            onPick={toggleTimelinePicker}
+            onPick={canCompare ? toggleTimelinePicker : undefined}
           />
           <PreviewPane
-            label="Selected version"
+            label="Current version"
             path={path}
             commit={currentCommit}
             state={current.result}
             loading={current.result.state === "loading"}
             onRetry={current.retry}
-            onAttach={() => void attachExport(currentCommit, current)}
             zoom={zoom}
             pan={pan}
             onKeyDown={onKeyDown}
@@ -640,11 +532,6 @@ export function PreviewComparison({
             onWheel={wheel}
           />
         </div>
-      )}
-      {attachError && (
-        <p className="compare-error" role="alert">
-          {attachError}
-        </p>
       )}
       {mode === "difference" && differenceState === "loading" && (
         <p className="muted-caption" role="status">
@@ -669,7 +556,7 @@ export function PreviewComparison({
         )}
       {anyPreview && (
         <p className="muted-caption">
-          Zoom with + and − or Ctrl/⌘ + scroll. Pan with arrow keys or drag.
+          Zoom with +/− or Ctrl/⌘ + scroll. Pan with arrow keys or drag.
         </p>
       )}
     </section>
@@ -683,7 +570,6 @@ function PreviewPane({
   state,
   loading,
   onRetry,
-  onAttach,
   zoom,
   pan,
   onKeyDown,
@@ -700,7 +586,6 @@ function PreviewPane({
   state: PreviewLoad;
   loading: boolean;
   onRetry: () => void;
-  onAttach: () => void;
   zoom: number;
   pan: { x: number; y: number };
   onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void;
@@ -717,8 +602,8 @@ function PreviewPane({
   const adapterNote =
     state.state === "ready"
       ? state.preview.adapter === "clip"
-        ? `Clip Studio Paint thumbnail · ${state.preview.width} × ${state.preview.height}`
-        : `Artist-provided PNG/JPEG export · approximate visual reference · ${state.preview.width} × ${state.preview.height}`
+        ? `Clip Studio Paint preview · ${state.preview.width} × ${state.preview.height}`
+        : `Attached export · approximate · ${state.preview.width} × ${state.preview.height}`
       : "";
   return (
     <div
@@ -752,7 +637,7 @@ function PreviewPane({
     >
       {pickerArmed && (
         <p className="timeline-picker-hint" role="status">
-          Choose a checkpoint in History.
+          Choose a version in history
         </p>
       )}
       {!commit && onPick ? (
@@ -766,6 +651,8 @@ function PreviewPane({
           <Icon name="history" />
           {pickerArmed ? "Cancel timeline selection" : "Choose from History"}
         </button>
+      ) : !commit ? (
+        <div className="preview-state">No previous version selected</div>
       ) : loading ? (
         <div className="preview-state" role="status">
           Loading preview…
@@ -804,19 +691,7 @@ function PreviewPane({
       ) : (
         <div className="preview-state">
           <Icon name="file" />
-          <span>
-            {commit
-              ? "No preview saved for this version"
-              : "Choose an earlier version"}
-          </span>
-          {commit && isClipFile(path) && (
-            <button
-              className="secondary-button attach-preview"
-              onClick={onAttach}
-            >
-              Attach PNG/JPEG export…
-            </button>
-          )}
+          <span>No preview saved for this version</span>
         </div>
       )}
       <span className="preview-card-label" title={commit?.title}>
@@ -845,20 +720,6 @@ function PreviewPane({
           {pickerArmed ? "Cancel timeline selection" : "Choose from History"}
         </button>
       )}
-      {commit &&
-        !loading &&
-        isClipFile(path) &&
-        state.state !== "unavailable" && (
-          <button
-            className="secondary-button attach-preview"
-            onClick={onAttach}
-            title={`Attach a flattened PNG or JPEG export as an approximate reference for ${commit.title}, ${path}`}
-          >
-            {state.state === "ready" && state.preview.adapter === "export"
-              ? "Replace attached preview…"
-              : "Attach PNG/JPEG export…"}
-          </button>
-        )}
     </div>
   );
 }

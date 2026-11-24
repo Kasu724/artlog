@@ -38,28 +38,20 @@ export type ProjectView = {
   name: string;
   settings: Settings;
   historyCompression: boolean | null;
-  canRepackHistory: boolean;
   size: number;
   recoveryPaths: string[];
   commits: CommitSummary[];
   capture?: CaptureStatus;
   project: ProjectSummary;
   files: ProjectFile[];
-  openWarning?: string;
   metadata: string;
-};
-
-export type ScanEntry = {
-  path: string;
-  size: number;
 };
 
 export type ProjectSummary = {
   id: string;
   name: string;
-  mode: "folder" | "singleFile";
-  path: string | null;
-  recovered?: boolean;
+  mode: "singleFile";
+  path: string;
 };
 
 export type ProjectFile = {
@@ -68,18 +60,6 @@ export type ProjectFile = {
   tracked: boolean;
   hasHistory: boolean;
   present: boolean;
-};
-
-export type TrashItem = {
-  id: string;
-  projectId: string;
-  projectName: string;
-  filePath: string | null;
-  removedAt: string;
-  size: number;
-  kind: "project" | "fileHistory";
-  activeSize: number | null;
-  purgePending: boolean;
 };
 
 export type FileVersion = {
@@ -115,4 +95,4 @@ export type Preview = {
 export type CommitThumbnail = Preview & { path: string };
 export type ComparisonVersion = { id: string; path: string };
 
-export type ViewName = "history" | "files" | "settings";
+export type ViewName = "history" | "settings";

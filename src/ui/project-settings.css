@@ -1,185 +1,6 @@
-.files-view,
-.settings-view,
-.project-options {
-  min-width: 0;
-}
-
-.files-view {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-}
-
-.files-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px 20px;
-  margin-bottom: 16px;
-}
-
-.files-toolbar .project-path {
-  flex: 1;
-}
-
-.files-toolbar .primary-button {
-  flex: none;
-}
-
-.files-register {
-  overflow-x: auto;
-  padding-bottom: 4px;
-  scrollbar-width: thin;
-}
-
-.files-table {
-  width: 100%;
-  min-width: 570px;
-  table-layout: fixed;
-  border-spacing: 0;
-  border-top: 1px solid var(--border);
-}
-
-.files-table th,
-.files-table td {
-  padding: 10px 8px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-}
-
-.files-table thead th {
-  border-bottom-color: var(--control-border);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.files-table thead th:nth-child(1) {
-  width: 36px;
-}
-
-.files-table thead th:nth-child(2) {
-  width: 74px;
-}
-
-.files-table thead th:nth-child(4) {
-  width: 112px;
-}
-
-.files-table thead th:nth-child(5) {
-  width: 76px;
-}
-
-.files-table thead th:nth-child(6) {
-  width: 29%;
-}
-
-.files-table-name {
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.file-size,
-.settings-file-size,
-.repository-stats dd {
-  font-variant-numeric: tabular-nums;
-}
-
-.file-size {
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.file-thumbnail {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--inset);
-  color: var(--muted);
-}
-
-.file-thumbnail img {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  object-fit: contain;
-}
-
-.file-tracking-status {
-  display: grid;
-  justify-items: start;
-  gap: 4px;
-}
-
-.tracking-on,
-.tracking-off {
-  padding: 2px 7px;
-  border: 1px solid var(--purple);
-  border-radius: 20px;
-  color: var(--purple);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.tracking-off {
-  border-color: var(--control-border);
-  color: var(--muted);
-}
-
-.file-missing {
-  color: var(--warning-text);
-  font-size: 12px;
-}
-
-.files-empty {
-  padding: 18px 0;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-}
-
-.files-empty .icon {
-  color: var(--purple);
-}
-
-.files-empty h3 {
-  margin: 6px 0;
-  color: var(--text);
-}
-
-.files-empty p {
-  margin: 0;
-}
-
-.managed-files {
-  display: grid;
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.managed-files li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.managed-file-description {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 .managed-file-actions,
-.project-options form {
+.project-options form,
+.working-file-missing {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -188,6 +9,10 @@
 
 .file-delete-action:not(:disabled) {
   color: var(--warning-text);
+}
+
+.working-file-missing {
+  margin-bottom: 8px;
 }
 
 .project-options form {
@@ -359,51 +184,6 @@
   font-size: 12px;
 }
 
-.settings-files {
-  max-height: 220px;
-  margin-top: 8px;
-  padding: 4px;
-  overflow: auto;
-  scrollbar-width: thin;
-}
-
-.settings-file {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 36px;
-  padding: 4px;
-  cursor: pointer;
-}
-
-.settings-file:hover {
-  background: var(--surface);
-}
-
-.settings-file input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--purple);
-}
-
-.settings-file .icon {
-  color: var(--muted);
-}
-
-.settings-file-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-file-size,
-.settings-empty {
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .health-error {
   margin: 10px 0 0;
   padding: 9px 11px;
@@ -455,14 +235,4 @@
 
 .settings-save-status .icon {
   color: var(--purple);
-}
-
-@media (max-width: 680px) {
-  .files-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .files-toolbar .project-path {
-    flex-basis: 100%;
-  }
 }

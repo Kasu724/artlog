@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { ProjectView, ScanEntry } from "../types";
+import type { ProjectView } from "../types";
 
 const { invokeMock, openMock, saveMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -24,8 +24,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: saveMock,
 }));
 
-const files: ScanEntry[] = [{ path: "painting.clip", size: 24576 }];
-
 function project(commits: ProjectView["commits"]): ProjectView {
   return {
     id: "project-1",
@@ -39,7 +37,6 @@ function project(commits: ProjectView["commits"]): ProjectView {
     },
     size: 2048,
     historyCompression: true,
-    canRepackHistory: true,
     recoveryPaths: [],
     commits,
     project: {
@@ -48,7 +45,15 @@ function project(commits: ProjectView["commits"]): ProjectView {
       mode: "singleFile",
       path: "painting.clip",
     },
-    files: [],
+    files: [
+      {
+        id: "file-1",
+        path: "painting.clip",
+        present: true,
+        tracked: true,
+        hasHistory: true,
+      },
+    ],
   };
 }
 
@@ -75,12 +80,9 @@ const secondCommit = {
 function wireProject(result = project([secondCommit, firstCommit])) {
   invokeMock.mockImplementation((command: string) => {
     switch (command) {
-      case "list_projects":
-        return Promise.resolve([result.project]);
+      case "open_clip":
       case "open_container_project":
         return Promise.resolve(result);
-      case "project_files":
-        return Promise.resolve(files);
       case "repository_health":
         return Promise.resolve({ versions: result.commits.length, objects: 2 });
       case "list_commit_files":
@@ -96,14 +98,6 @@ function wireProject(result = project([secondCommit, firstCommit])) {
         );
       case "get_preview":
         return Promise.resolve(null);
-      case "attach_preview":
-        return Promise.resolve({
-          dataUrl: "data:image/png;base64,AA==",
-          width: 32,
-          height: 32,
-          adapter: "export",
-          adapterVersion: 1,
-        });
       case "project_view":
         return Promise.resolve(result);
       case "project_state":
@@ -115,8 +109,6 @@ function wireProject(result = project([secondCommit, firstCommit])) {
             message: "Up to date",
           },
         });
-      case "create_checkpoint":
-        return Promise.resolve(result);
       case "restore_copy":
         return Promise.resolve("C:\\art\\painting-restored.clip");
       case "save_settings":
@@ -127,16 +119,13 @@ function wireProject(result = project([secondCommit, firstCommit])) {
         return Promise.reject(new Error(`Unexpected command: ${command}`));
     }
   });
-  openMock.mockResolvedValue("C:\\art\\moss study");
+  openMock.mockResolvedValue("C:\\art\\moss study\\painting.clip");
 }
 
 async function openExistingProject() {
   render(<App />);
-  fireEvent.click(
-    screen.getByRole("button", { name: /browse saved histories/i }),
-  );
-  fireEvent.click(await screen.findByRole("button", { name: /moss study/i }));
-  await screen.findByRole("heading", { name: "moss study" });
+  fireEvent.click(screen.getByRole("button", { name: "Open a .clip file" }));
+  await screen.findByRole("heading", { name: "painting.clip" });
 }
 
 describe("ArtLog desktop workflows", () => {
@@ -148,11 +137,14 @@ describe("ArtLog desktop workflows", () => {
     wireProject();
   });
 
-  it("opens Clip files directly and offers saved history browsing", () => {
+  it("shows the single-file entry action", () => {
     render(<App />);
     expect(
-      screen.getByRole("button", { name: /browse saved histories/i }),
-    ).toBeTruthy();
+      screen.getByRole("button", { name: "Open a .clip file" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /browse saved histories/i }),
+    ).toBeNull();
     expect(
       screen.getByText(/projects you open will appear here/i),
     ).toBeVisible();
@@ -162,11 +154,8 @@ describe("ArtLog desktop workflows", () => {
 
   it("reopens a recent project from the sidebar after an app reload", async () => {
     const app = render(<App />);
-    fireEvent.click(
-      screen.getByRole("button", { name: /browse saved histories/i }),
-    );
-    fireEvent.click(await screen.findByRole("button", { name: /moss study/i }));
-    await screen.findByRole("heading", { name: "moss study" });
+    fireEvent.click(screen.getByRole("button", { name: "Open a .clip file" }));
+    await screen.findByRole("heading", { name: "painting.clip" });
     app.unmount();
 
     openMock.mockClear();
@@ -176,7 +165,7 @@ describe("ArtLog desktop workflows", () => {
     fireEvent.click(
       within(sidebar).getByRole("button", { name: "moss study" }),
     );
-    await screen.findByRole("heading", { name: "moss study" });
+    await screen.findByRole("heading", { name: "painting.clip" });
     expect(invokeMock).toHaveBeenCalledWith("open_container_project", {
       root: "C:\\art\\moss study",
       id: "repository-1",
@@ -188,26 +177,14 @@ describe("ArtLog desktop workflows", () => {
     await openExistingProject();
     expect(screen.getByRole("heading", { name: "History" })).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /softened the background/i }),
+      screen.getByRole("button", {
+        name: /softened the background/i,
+        pressed: true,
+      }),
     ).toBeTruthy();
-    expect(invokeMock).toHaveBeenCalledWith("open_container_project", {
-      root: "C:\\art\\moss study",
-      id: "repository-1",
+    expect(invokeMock).toHaveBeenCalledWith("open_clip", {
+      path: "C:\\art\\moss study\\painting.clip",
     });
-  });
-
-  it("opens saved folder history with capture disabled", async () => {
-    const result = project([firstCommit]);
-    wireProject({
-      ...result,
-      project: { ...result.project, mode: "folder", path: null },
-      openWarning: "This saved history is read-only.",
-    });
-    await openExistingProject();
-    expect(screen.getByText("This saved history is read-only.")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: /new checkpoint/i }),
-    ).toBeDisabled();
   });
 
   it("opens the selected .clip file directly", async () => {
@@ -280,8 +257,6 @@ describe("ArtLog desktop workflows", () => {
           },
         });
       if (command === "project_view") return Promise.resolve(renamed);
-      if (command === "project_files")
-        return Promise.resolve([{ path: activePath, size: 24576 }]);
       return base?.(command, args);
     });
     openMock.mockResolvedValue("C:\\art\\painting.clip");
@@ -293,15 +268,12 @@ describe("ArtLog desktop workflows", () => {
     activePath = newPath;
     await waitFor(
       () => {
-        expect(screen.getByRole("checkbox", { name: newPath })).toBeChecked();
+        expect(screen.getByRole("heading", { name: newPath })).toBeVisible();
         expect(screen.getByLabelText("Automatic capture")).not.toBeChecked();
       },
       { timeout: 5000 },
     );
     expect(invokeMock).toHaveBeenCalledWith("project_view", {
-      projectId: original.id,
-    });
-    expect(invokeMock).toHaveBeenCalledWith("project_files", {
       projectId: original.id,
     });
     expect(screen.getByRole("heading", { name: newPath })).toBeVisible();
@@ -334,7 +306,7 @@ describe("ArtLog desktop workflows", () => {
         : base?.(command, args),
     );
     await openExistingProject();
-    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     openMock.mockResolvedValueOnce(destination);
     fireEvent.click(screen.getByRole("button", { name: "Link renamed file" }));
     await screen.findByRole("heading", { name: renamed });
@@ -343,53 +315,21 @@ describe("ArtLog desktop workflows", () => {
       fileId: file.id,
       destination,
     });
-    expect(invokeMock).toHaveBeenCalledWith("project_files", {
-      projectId: linked.id,
-    });
   });
 
-  it("requires the file name before deletion and refreshes the project session", async () => {
-    const file = {
-      id: "stable-file",
-      path: "painting.clip",
-      tracked: true,
-      present: true,
-      hasHistory: true,
-    };
-    const original = { ...project([secondCommit, firstCommit]), files: [file] };
-    wireProject(original);
+  it("requires the filename before permanently deleting history and returning home", async () => {
     const base = invokeMock.getMockImplementation();
-    const cleaned = {
-      ...original,
-      id: "new-session",
-      commits: [{ ...firstCommit, id: "new-head", fileCount: 0 }],
-      settings: { ...original.settings, tracked: [] },
-      files: [{ ...file, tracked: false, hasHistory: false }],
-    };
-    invokeMock.mockImplementation(
-      (command: string, args: { projectId?: string }) => {
-        if (command === "delete_file_history") return Promise.resolve(cleaned);
-        if (args?.projectId === cleaned.id && command === "project_state")
-          return Promise.resolve({
-            head: "new-head",
-            capture: {
-              projectId: cleaned.id,
-              state: "current",
-              message: "Up to date",
-            },
-          });
-        return base?.(command, args);
-      },
+    invokeMock.mockImplementation((command: string, args: unknown) =>
+      command === "delete_history" ? Promise.resolve() : base?.(command, args),
     );
     await openExistingProject();
-    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Delete file history" }),
     );
     const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByText(/checkpoint ids may change/i)).toBeVisible();
     const deletion = dialog.getByRole("button", {
-      name: "Delete file history",
+      name: "Permanently delete history",
     });
     expect(deletion).toBeDisabled();
     fireEvent.change(dialog.getByRole("textbox"), {
@@ -397,139 +337,48 @@ describe("ArtLog desktop workflows", () => {
     });
     fireEvent.click(deletion);
     expect(
-      await screen.findByText("File history moved to ArtLog trash."),
+      await screen.findByText("Deleted history for painting.clip."),
     ).toBeVisible();
-    expect(invokeMock).toHaveBeenCalledWith("delete_file_history", {
-      projectId: original.id,
-      fileId: file.id,
+    expect(invokeMock).toHaveBeenCalledWith("delete_history", {
+      projectId: "project-1",
       confirmation: "painting.clip",
     });
     expect(
-      screen.queryByRole("button", { name: "Delete file history" }),
-    ).toBeNull();
-    expect(invokeMock).toHaveBeenCalledWith("project_files", {
-      projectId: cleaned.id,
-    });
-  });
-
-  it("opens location trash after removing a project and separately confirms permanent deletion", async () => {
-    const base = invokeMock.getMockImplementation();
-    invokeMock.mockImplementation((command: string, args: unknown) => {
-      if (command === "remove_project" || command === "purge_trash")
-        return Promise.resolve();
-      if (command === "list_trash")
-        return Promise.resolve([
-          {
-            id: "archive-1",
-            projectId: "repository-1",
-            projectName: "moss study",
-            filePath: null,
-            removedAt: "2026-11-18T04:00:00Z",
-            size: 2048,
-            kind: "project",
-            purgePending: false,
-          },
-        ]);
-      return base?.(command, args);
-    });
-    await openExistingProject();
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove project" }));
-    const removal = within(screen.getByRole("dialog"));
-    fireEvent.change(removal.getByRole("textbox"), {
-      target: { value: "moss study" },
-    });
-    fireEvent.click(removal.getByRole("button", { name: "Remove project" }));
-    expect(
-      await screen.findByRole("heading", { name: "ArtLog trash" }),
+      screen.getByRole("button", { name: "Open a .clip file" }),
     ).toBeVisible();
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /permanently delete.*moss study/i,
-      }),
-    );
-    const purge = within(screen.getByRole("dialog"));
-    const button = purge.getByRole("button", { name: "Permanently delete" });
-    fireEvent.change(purge.getByRole("textbox"), {
-      target: { value: "delete" },
-    });
-    expect(button).toBeDisabled();
-    fireEvent.change(purge.getByRole("textbox"), {
-      target: { value: "DELETE" },
-    });
-    fireEvent.click(button);
-    await screen.findByText("Trash is empty for this folder.");
-    expect(invokeMock).toHaveBeenCalledWith("purge_trash", {
-      root: "C:\\art\\moss study",
-      id: "archive-1",
-      confirmation: "DELETE",
-    });
   });
 
-  it("lists existing histories in the selected folder without creating folder tracking", async () => {
-    const base = invokeMock.getMockImplementation();
-    invokeMock.mockImplementation((command: string, args: unknown) => {
-      if (command === "list_projects") return Promise.resolve([]);
-      return base?.(command, args);
-    });
-    render(<App />);
-    fireEvent.click(
-      screen.getByRole("button", { name: /browse saved histories/i }),
-    );
-    expect(
-      await screen.findByText("No saved histories in this folder"),
-    ).toBeVisible();
-    expect(invokeMock).toHaveBeenCalledWith("list_projects", {
-      root: "C:\\art\\moss study",
-    });
-    expect(invokeMock).not.toHaveBeenCalledWith(
-      "activate_project",
-      expect.anything(),
-    );
-  });
-
-  it("saves a named checkpoint and updates the timeline", async () => {
+  it("saves a new title and note on an existing version", async () => {
     const updated = project([
-      { ...secondCommit, id: "v3", title: "Line art approved" },
-      secondCommit,
+      { ...secondCommit, title: "Line art approved", note: "Ready to color" },
       firstCommit,
     ]);
-    invokeMock.mockImplementation((command: string) => {
-      if (command === "list_projects")
-        return Promise.resolve([project([secondCommit, firstCommit]).project]);
-      if (command === "open_container_project")
-        return Promise.resolve(project([secondCommit, firstCommit]));
-      if (command === "project_files") return Promise.resolve(files);
-      if (command === "project_state")
-        return Promise.resolve({
-          head: "v2",
-          capture: {
-            projectId: "project-1",
-            state: "current",
-            message: "Up to date",
-          },
-        });
-      if (command === "repository_health")
-        return Promise.resolve({ versions: 2, objects: 2 });
-      if (command === "list_commit_files")
-        return Promise.resolve([
-          { path: "painting.clip", size: 24576, hash: "a".repeat(64) },
-        ]);
-      if (command === "create_checkpoint") return Promise.resolve(updated);
-      return Promise.reject(new Error(`Unexpected command: ${command}`));
-    });
+    const base = invokeMock.getMockImplementation();
+    invokeMock.mockImplementation((command: string, args: unknown) =>
+      command === "update_version_details"
+        ? Promise.resolve(updated)
+        : base?.(command, args),
+    );
     await openExistingProject();
-    fireEvent.click(screen.getByRole("button", { name: "New checkpoint" }));
-    fireEvent.change(screen.getByLabelText(/checkpoint name/i), {
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /edit version details for softened the background/i,
+      }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText(/version title/i), {
       target: { value: "Line art approved" },
     });
-    fireEvent.change(screen.getByLabelText(/note/i), {
+    fireEvent.change(dialog.getByLabelText(/notes/i), {
       target: { value: "Ready to color" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save checkpoint/i }));
-    await screen.findByRole("button", { name: /line art approved/i });
-    expect(invokeMock).toHaveBeenCalledWith("create_checkpoint", {
+    fireEvent.click(dialog.getByRole("button", { name: "Save details" }));
+    expect(
+      await screen.findByRole("heading", { name: "Line art approved" }),
+    ).toBeVisible();
+    expect(invokeMock).toHaveBeenCalledWith("update_version_details", {
       projectId: "project-1",
+      id: "v2",
       title: "Line art approved",
       note: "Ready to color",
     });
@@ -576,30 +425,6 @@ describe("ArtLog desktop workflows", () => {
     ).toBe(false);
   });
 
-  it("attaches a chosen PNG export to the selected version and file", async () => {
-    openMock
-      .mockResolvedValueOnce("C:\\art\\moss study")
-      .mockResolvedValueOnce("C:\\art\\flattened.png");
-    await openExistingProject();
-    await screen.findByText(/no preview saved for this version/i);
-    fireEvent.click(
-      screen.getByRole("button", { name: /attach png\/jpeg export/i }),
-    );
-    await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith("attach_preview", {
-        projectId: "project-1",
-        id: "v2",
-        path: "painting.clip",
-        imagePath: "C:\\art\\flattened.png",
-      }),
-    );
-    expect(
-      await screen.findByText(
-        /artist-provided png\/jpeg export · approximate visual reference/i,
-      ),
-    ).toBeTruthy();
-  });
-
   it("compares a matching earlier version with shared zoom controls", async () => {
     const preview = {
       dataUrl: "data:image/png;base64,AA==",
@@ -611,14 +436,8 @@ describe("ArtLog desktop workflows", () => {
     invokeMock.mockImplementation(
       (command: string, args?: Record<string, unknown>) => {
         switch (command) {
-          case "list_projects":
-            return Promise.resolve([
-              project([secondCommit, firstCommit]).project,
-            ]);
-          case "open_container_project":
+          case "open_clip":
             return Promise.resolve(project([secondCommit, firstCommit]));
-          case "project_files":
-            return Promise.resolve(files);
           case "project_state":
             return Promise.resolve({
               head: "v2",
@@ -650,15 +469,6 @@ describe("ArtLog desktop workflows", () => {
       },
     );
     await openExistingProject();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: /compare with another version/i }),
-      ).toBeEnabled(),
-    );
-    const compareButton = screen.getByRole("button", {
-      name: /compare with another version/i,
-    });
-    fireEvent.click(compareButton);
     const selector = await screen.findByRole("combobox", {
       name: /compare with version/i,
     });
@@ -692,14 +502,16 @@ describe("ArtLog desktop workflows", () => {
     expect(screen.getByText("100%")).toBeTruthy();
   });
 
-  it("uses a timeline click for the previous preview without changing the selected checkpoint", async () => {
+  it("uses a timeline click for the previous preview without changing the current version", async () => {
     await openExistingProject();
     const timeline = screen.getByRole("region", { name: "Version timeline" });
     const current = within(timeline).getByRole("button", {
       name: /softened the background/i,
+      pressed: true,
     });
     const previous = within(timeline).getByRole("button", {
       name: /project created/i,
+      pressed: false,
     });
     const slot = await screen.findByRole("button", {
       name: "Choose previous version from timeline",
@@ -711,6 +523,7 @@ describe("ArtLog desktop workflows", () => {
     expect(
       selector.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    expect(screen.getByText("Choose a version in history")).toBeVisible();
     expect(current).toBeDisabled();
     expect(slot).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => expect(previous).toBeEnabled());
@@ -734,11 +547,8 @@ describe("ArtLog desktop workflows", () => {
       commitId: "restore123",
     };
     invokeMock.mockImplementation((command: string) => {
-      if (command === "list_projects")
-        return Promise.resolve([project([secondCommit, firstCommit]).project]);
-      if (command === "open_container_project")
+      if (command === "open_clip")
         return Promise.resolve(project([secondCommit, firstCommit]));
-      if (command === "project_files") return Promise.resolve(files);
       if (command === "project_state")
         return Promise.resolve({
           head: "v2",
@@ -786,7 +596,7 @@ describe("ArtLog desktop workflows", () => {
     expect(await screen.findByText(/safety snapshot saved/i)).toBeTruthy();
   });
 
-  it("saves tracking and automatic-capture settings", async () => {
+  it("saves automatic capture and save delay settings", async () => {
     const saved = project([secondCommit, firstCommit]);
     saved.settings = {
       tracked: ["painting.clip"],
@@ -794,11 +604,8 @@ describe("ArtLog desktop workflows", () => {
       debounceMs: 2500,
     };
     invokeMock.mockImplementation((command: string) => {
-      if (command === "list_projects")
-        return Promise.resolve([project([secondCommit, firstCommit]).project]);
-      if (command === "open_container_project")
+      if (command === "open_clip")
         return Promise.resolve(project([secondCommit, firstCommit]));
-      if (command === "project_files") return Promise.resolve(files);
       if (command === "project_state")
         return Promise.resolve({
           head: "v2",
@@ -891,64 +698,5 @@ describe("ArtLog desktop workflows", () => {
       enabled: true,
     });
     expect(screen.getByLabelText("Compress new content objects")).toBeChecked();
-  });
-
-  it("keeps historical non-CLIP files copy-only and without previews", async () => {
-    invokeMock.mockImplementation((command: string) => {
-      switch (command) {
-        case "list_projects":
-          return Promise.resolve([
-            project([secondCommit, firstCommit]).project,
-          ]);
-        case "open_container_project":
-          return Promise.resolve(project([secondCommit, firstCommit]));
-        case "project_files":
-          return Promise.resolve(files);
-        case "project_state":
-          return Promise.resolve({
-            head: "v2",
-            capture: {
-              projectId: "project-1",
-              state: "current",
-              message: "Up to date",
-            },
-          });
-        case "repository_health":
-          return Promise.resolve({ versions: 2, objects: 2 });
-        case "list_commit_files":
-          return Promise.resolve([
-            { path: "old-work.psd", size: 128, hash: "b".repeat(64) },
-          ]);
-        case "restore_copy":
-          return Promise.resolve("C:\\art\\old-work-copy.psd");
-        default:
-          return Promise.reject(new Error(`Unexpected command: ${command}`));
-      }
-    });
-    saveMock.mockResolvedValue("C:\\art\\old-work-copy.psd");
-    await openExistingProject();
-    expect(
-      await screen.findByRole("heading", { name: "Archived file" }),
-    ).toBeTruthy();
-    expect(screen.getByText("old-work.psd")).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: /replace working file/i }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /attach png\/jpeg export/i }),
-    ).toBeNull();
-    expect(invokeMock).not.toHaveBeenCalledWith(
-      "get_preview",
-      expect.anything(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /restore as a copy/i }));
-    await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith("restore_copy", {
-        projectId: "project-1",
-        id: "v2",
-        path: "old-work.psd",
-        destination: "C:\\art\\old-work-copy.psd",
-      }),
-    );
   });
 });

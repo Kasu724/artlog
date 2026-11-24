@@ -10,15 +10,10 @@ import type {
   RepositoryHealth,
   RepackMode,
   RestoreOutcome,
-  ScanEntry,
-  ProjectSummary,
   Settings,
-  TrashItem,
 } from "./types";
 
 export const artlog = {
-  listProjects: (root: string) =>
-    invoke<ProjectSummary[]>("list_projects", { root }),
   openClip: (path: string) => invoke<ProjectView>("open_clip", { path }),
   openContainerProject: (root: string, id: string) =>
     invoke<ProjectView>("open_container_project", { root, id }),
@@ -27,8 +22,6 @@ export const artlog = {
     invoke<ProjectView>("project_view", { projectId }),
   projectState: (projectId: string) =>
     invoke<ProjectState>("project_state", { projectId }),
-  projectFiles: (projectId: string) =>
-    invoke<ScanEntry[]>("project_files", { projectId }),
   commitFiles: (projectId: string, id: string) =>
     invoke<FileVersion[]>("list_commit_files", { projectId, id }),
   comparisonVersions: (
@@ -41,8 +34,18 @@ export const artlog = {
       path,
       fileId,
     }),
-  createCheckpoint: (projectId: string, title: string, note: string) =>
-    invoke<ProjectView>("create_checkpoint", { projectId, title, note }),
+  updateVersionDetails: (
+    projectId: string,
+    id: string,
+    title: string,
+    note: string,
+  ) =>
+    invoke<ProjectView>("update_version_details", {
+      projectId,
+      id,
+      title,
+      note,
+    }),
   saveSettings: (projectId: string, settings: Settings) =>
     invoke<ProjectView>("save_settings", { projectId, settings }),
   setHistoryCompression: (projectId: string, enabled: boolean) =>
@@ -76,33 +79,10 @@ export const artlog = {
       "get_commit_thumbnail",
       path ? { projectId, id, path } : { projectId, id },
     ),
-  attachPreview: (
-    projectId: string,
-    id: string,
-    path: string,
-    imagePath: string,
-  ) => invoke<Preview>("attach_preview", { projectId, id, path, imagePath }),
-  stopTracking: (projectId: string, fileId: string) =>
-    invoke<ProjectView>("stop_tracking", { projectId, fileId }),
   relinkFile: (projectId: string, fileId: string, destination: string) =>
     invoke<ProjectView>("relink_file", { projectId, fileId, destination }),
   renameProject: (projectId: string, name: string) =>
     invoke<ProjectView>("rename_project", { projectId, name }),
-  deleteFileHistory: (
-    projectId: string,
-    fileId: string,
-    confirmation: string,
-  ) =>
-    invoke<ProjectView>("delete_file_history", {
-      projectId,
-      fileId,
-      confirmation,
-    }),
-  removeProject: (projectId: string, confirmation: string) =>
-    invoke<void>("remove_project", { projectId, confirmation }),
-  listTrash: (root: string) => invoke<TrashItem[]>("list_trash", { root }),
-  restoreTrash: (root: string, id: string) =>
-    invoke<ProjectView>("restore_trash", { root, id }),
-  purgeTrash: (root: string, id: string, confirmation: string) =>
-    invoke<void>("purge_trash", { root, id, confirmation }),
+  deleteHistory: (projectId: string, confirmation: string) =>
+    invoke<void>("delete_history", { projectId, confirmation }),
 };

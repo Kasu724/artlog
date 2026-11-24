@@ -170,69 +170,17 @@ button:disabled {
   background: var(--rail);
 }
 
-.entry-topbar::before {
-  order: 1;
-  flex: 1;
-  border-top: 1px solid var(--control-border);
-  content: "";
-}
-
-.entry-topbar > button {
-  order: 2;
-}
-
 .project-title {
   flex: 1;
   min-width: 0;
   margin: 0;
-  padding-left: 12px;
-  border-left: 1px solid var(--control-border);
-  font:
-    650 15px/1.35 "Segoe UI",
-    -apple-system,
-    system-ui,
-    sans-serif;
-  letter-spacing: normal;
-}
-
-.project-picker {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  max-width: 100%;
-  min-height: 34px;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text);
-}
-
-.project-picker:hover:not(:disabled) {
-  background: var(--inset);
-}
-
-.project-picker span {
-  min-width: 0;
+  padding-left: 16px;
   overflow: hidden;
+  border-left: 1px solid var(--control-border);
+  font-size: 15px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.project-picker .icon {
-  color: var(--muted);
-}
-
-.project-picker .icon-chevron {
-  width: 13px;
-  height: 13px;
-}
-
-.topbar-right {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 16px;
 }
 
 .capture-pill {
@@ -401,10 +349,11 @@ button:disabled {
   color: var(--muted);
 }
 
-.close-project {
-  margin-top: auto;
-  color: var(--muted);
-  font-size: 12px;
+.home-button {
+  display: inline-flex;
+  flex: none;
+  padding: 4px 6px;
+  font: 600 27px/1 var(--heading-font);
 }
 
 .page-heading {
@@ -440,10 +389,7 @@ button:disabled {
     column-gap: 10px;
   }
 
-  .topbar-right {
-    width: 100%;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 8px;
+  .project-topbar .capture-pill {
+    max-width: 100%;
   }
 }

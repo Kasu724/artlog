@@ -4,12 +4,12 @@ use artlog_core::{
     projects::{self, trash, Container, Mode, ProjectFile, Summary},
     restore,
     watcher::{WatchHandle, WatchState},
-    Commit, Health, Kind, RepackMode, RepackReport, Repository, ScanEntry, Settings,
+    Commit, Health, Kind, RepackMode, RepackReport, Repository, Settings,
 };
 use serde::Serialize;
 use std::{
     ops::Deref,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -27,8 +27,6 @@ struct Opened {
     repo: Arc<Repository>,
     capture: Arc<Mutex<CaptureStatus>>,
     watcher: Option<WatchHandle>,
-    open_warning: Option<String>,
-    can_repack_history: bool,
 }
 
 impl Deref for Opened {
@@ -42,19 +40,9 @@ impl Deref for Opened {
 impl Opened {
     fn new(repo: Repository, app: &AppHandle) -> Reply<Self> {
         let summary = projects::describes(&repo).map_err(message)?;
-        let warning = (summary.mode == Mode::Folder).then(|| {
-            "This saved history is read-only. You can browse checkpoints and restore copies."
-                .to_owned()
-        });
-        Self::with_warning(repo, app, warning, true)
-    }
-
-    fn with_warning(
-        repo: Repository,
-        app: &AppHandle,
-        open_warning: Option<String>,
-        can_repack_history: bool,
-    ) -> Reply<Self> {
+        if summary.mode != Mode::SingleFile {
+            return Err("Open a .clip file to use ArtLog.".into());
+        }
         static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
         // A portable repository can be copied. Scope commands to the particular
         // folder activation even when two folders share one repository ID.
@@ -64,9 +52,7 @@ impl Opened {
             NEXT_SESSION.fetch_add(1, Ordering::Relaxed)
         );
         let settings = repo.settings().map_err(message)?;
-        let initial = if open_warning.is_some() {
-            (WatchState::Paused, "Capture is paused.")
-        } else if !repo.recovery_paths().map_err(message)?.is_empty() {
+        let initial = if !repo.recovery_paths().map_err(message)?.is_empty() {
             (
                 WatchState::Paused,
                 "Review the restore recovery folders before capturing.",
@@ -86,17 +72,12 @@ impl Opened {
             repo: Arc::new(repo),
             capture,
             watcher: None,
-            open_warning,
-            can_repack_history,
         };
         project.start_watcher(app);
         Ok(project)
     }
 
     fn start_watcher(&mut self, app: &AppHandle) {
-        if self.open_warning.is_some() {
-            return;
-        }
         let watcher = {
             let app = app.clone();
             let saved = self.capture.clone();
@@ -132,13 +113,6 @@ impl Opened {
         if let Some(watcher) = self.watcher.take() {
             watcher.stop();
         }
-    }
-
-    fn writable(&self) -> Reply<()> {
-        if let Some(warning) = &self.open_warning {
-            return Err(warning.clone());
-        }
-        Ok(())
     }
 
     fn rescan(&self) {
@@ -182,15 +156,12 @@ pub(crate) struct ProjectView {
     name: String,
     settings: Settings,
     history_compression: Option<bool>,
-    can_repack_history: bool,
     size: u64,
     recovery_paths: Vec<String>,
     commits: Vec<Version>,
     capture: CaptureStatus,
     project: Summary,
     files: Vec<ProjectFile>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    open_warning: Option<String>,
     metadata: String,
 }
 
@@ -291,7 +262,6 @@ fn view(repo: &Opened, app: &AppHandle) -> Reply<ProjectView> {
         name: summary.name.clone(),
         settings: repo.settings().map_err(message)?,
         history_compression: repo.history_compression().ok(),
-        can_repack_history: repo.can_repack_history,
         size: repo.repository_size().map_err(message)?,
         recovery_paths: repo.recovery_paths().map_err(message)?,
         commits: history
@@ -309,29 +279,8 @@ fn view(repo: &Opened, app: &AppHandle) -> Reply<ProjectView> {
         capture: repo.capture.lock().map_err(message)?.clone(),
         project: summary,
         files,
-        open_warning: repo.open_warning.clone(),
         metadata: display(repo.metadata()),
     })
-}
-
-#[tauri::command]
-pub(crate) async fn list_projects(root: String) -> Reply<Vec<Summary>> {
-    background(move || {
-        let root = PathBuf::from(root);
-        if !root.is_absolute() || !root.is_dir() {
-            return Err("Choose a folder on this computer.".into());
-        }
-        match Container::discover(&root) {
-            Ok(Some(container)) => container.list().map_err(message),
-            Ok(None) => Ok(Vec::new()),
-            Err(error) => {
-                let repo =
-                    projects::readable_during_migration(&root).map_err(|_| message(error))?;
-                Ok(vec![projects::describes(&repo).map_err(message)?])
-            }
-        }
-    })
-    .await
 }
 
 fn replace_active(
@@ -345,12 +294,6 @@ fn replace_active(
     }
     *active = Some(project);
     Ok(view)
-}
-
-fn project_container(root: &Path) -> Reply<Container> {
-    Container::discover(root)
-        .map_err(message)?
-        .ok_or_else(|| "No ArtLog history was found in this folder.".to_owned())
 }
 
 #[tauri::command]
@@ -382,16 +325,13 @@ pub(crate) async fn open_container_project(
     background(move || {
         let mut active = desktop.0.lock().map_err(message)?;
         let root = Path::new(&root);
-        let project = match project_container(root).and_then(|c| c.open(&id).map_err(message)) {
-            Ok(repo) => Opened::new(repo, &app)?,
-            Err(error) => {
-                let legacy = projects::readable_during_migration(root).map_err(|_| error.clone())?;
-                if legacy.id() != id { return Err(error); }
-                Opened::with_warning(legacy, &app, Some(format!("ArtLog could not upgrade this folder. Its saved history is available as copies. Reopen the folder to retry. {error}")), false)?
-            }
-        };
-        replace_active(&mut active, project, &app)
-    }).await
+        let container = Container::discover(root)
+            .map_err(message)?
+            .ok_or_else(|| "No ArtLog history was found in this folder.".to_owned())?;
+        let repo = container.open(&id).map_err(message)?;
+        replace_active(&mut active, Opened::new(repo, &app)?, &app)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -426,12 +366,10 @@ pub(crate) async fn project_state(
     background(move || {
         let mut active = desktop.0.lock().map_err(message)?;
         let project = active_mut(&mut active, &project_id)?;
-        if project.open_warning.is_none() {
-            if let Some(repo) = projects::reconcile_open_file(project).map_err(message)? {
-                project.stop_watcher();
-                project.repo = Arc::new(repo);
-                project.start_watcher(&app);
-            }
+        if let Some(repo) = projects::reconcile_open_file(project).map_err(message)? {
+            project.stop_watcher();
+            project.repo = Arc::new(repo);
+            project.start_watcher(&app);
         }
         let _read = project.with_read_lock().map_err(message)?;
         let capture = project.capture.lock().map_err(message)?.clone();
@@ -440,18 +378,6 @@ pub(crate) async fn project_state(
             path: projects::describes(project).map_err(message)?.path,
             capture,
         })
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn project_files(
-    state: State<'_, Desktop>,
-    project_id: String,
-) -> Reply<Vec<ScanEntry>> {
-    on_project(state, project_id, |repo| {
-        let _read = repo.with_read_lock().map_err(message)?;
-        projects::scan_project_files(repo).map_err(message)
     })
     .await
 }
@@ -481,29 +407,6 @@ pub(crate) async fn list_commit_files(
 }
 
 #[tauri::command]
-pub(crate) async fn create_checkpoint(
-    app: AppHandle,
-    state: State<'_, Desktop>,
-    project_id: String,
-    title: String,
-    note: String,
-) -> Reply<ProjectView> {
-    let title = title.trim().to_owned();
-    if title.is_empty() || title.chars().count() > 100 || note.chars().count() > 1000 {
-        return Err(
-            "Enter a checkpoint name of up to 100 characters and a note of up to 1,000.".into(),
-        );
-    }
-    on_project(state, project_id, move |repo| {
-        repo.writable()?;
-        repo.capture(Kind::Checkpoint, &title, note.trim())
-            .map_err(message)?;
-        view(repo, &app)
-    })
-    .await
-}
-
-#[tauri::command]
 pub(crate) async fn update_version_details(
     app: AppHandle,
     state: State<'_, Desktop>,
@@ -513,7 +416,6 @@ pub(crate) async fn update_version_details(
     note: String,
 ) -> Reply<ProjectView> {
     on_project(state, project_id, move |repo| {
-        repo.writable()?;
         repo.update_version_details(&id, &title, &note)
             .map_err(message)?;
         view(repo, &app)
@@ -529,7 +431,6 @@ pub(crate) async fn save_settings(
     settings: Settings,
 ) -> Reply<ProjectView> {
     on_project(state, project_id, move |repo| {
-        repo.writable()?;
         repo.set_settings(settings).map_err(message)?;
         repo.rescan();
         view(repo, &app)
@@ -544,7 +445,6 @@ pub(crate) async fn set_history_compression(
     enabled: bool,
 ) -> Reply<u64> {
     on_project(state, project_id, move |repo| {
-        repo.writable()?;
         repo.set_history_compression(enabled).map_err(message)?;
         repo.repository_size().map_err(message)
     })
@@ -558,11 +458,6 @@ pub(crate) async fn repack_history(
     mode: RepackMode,
 ) -> Reply<HistoryRepack> {
     on_project(state, project_id, move |repo| {
-        if !repo.can_repack_history {
-            return Err(
-                "Reopen this location to finish the history upgrade before repacking.".into(),
-            );
-        }
         let report = repo.repack_history(mode).map_err(message)?;
         let size = repo.repository_size().map_err(message)?;
         Ok(HistoryRepack { report, size })
@@ -596,7 +491,6 @@ pub(crate) async fn restore_in_place(
     confirmed_target: String,
 ) -> Reply<restore::RestoreOutcome> {
     on_project(state, project_id, move |repo| {
-        repo.writable()?;
         let result = restore::in_place(repo, &id, &path, &confirmed_target).map_err(message);
         repo.rescan();
         result
@@ -676,38 +570,6 @@ pub(crate) async fn comparison_versions(
 }
 
 #[tauri::command]
-pub(crate) async fn attach_preview(
-    state: State<'_, Desktop>,
-    project_id: String,
-    id: String,
-    path: String,
-    image_path: String,
-) -> Reply<Preview> {
-    on_project(state, project_id, move |repo| {
-        repo.writable()?;
-        let _read = repo.with_read_lock().map_err(message)?;
-        formats::attach(repo, &id, &path, Path::new(&image_path)).map_err(message)
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn stop_tracking(
-    app: AppHandle,
-    state: State<'_, Desktop>,
-    project_id: String,
-    file_id: String,
-) -> Reply<ProjectView> {
-    on_project(state, project_id, move |repo| {
-        repo.writable()?;
-        projects::stop_tracking(repo, &file_id).map_err(message)?;
-        repo.rescan();
-        view(repo, &app)
-    })
-    .await
-}
-
-#[tauri::command]
 pub(crate) async fn relink_file(
     app: AppHandle,
     state: State<'_, Desktop>,
@@ -719,7 +581,6 @@ pub(crate) async fn relink_file(
     background(move || {
         let mut active = desktop.0.lock().map_err(message)?;
         let project = active_mut(&mut active, &project_id)?;
-        project.writable()?;
         let (root, path) = projects::selected_file(Path::new(&destination)).map_err(message)?;
         if root != project.root() {
             return Err("Choose a .clip file in the original folder.".into());
@@ -744,7 +605,6 @@ pub(crate) async fn rename_project(
     name: String,
 ) -> Reply<ProjectView> {
     on_project(state, project_id, move |repo| {
-        repo.writable()?;
         projects::rename(repo, &name).map_err(message)?;
         view(repo, &app)
     })
@@ -769,7 +629,6 @@ pub(crate) async fn delete_history(
     background(move || {
         let mut active = desktop.0.lock().map_err(message)?;
         let project = active_mut(&mut active, &project_id)?;
-        project.writable()?;
         project.stop_watcher();
         match trash::delete_single_history(project, &confirmation) {
             Ok(()) => {
@@ -786,108 +645,6 @@ pub(crate) async fn delete_history(
                 Err(message(error))
             }
         }
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn delete_file_history(
-    app: AppHandle,
-    state: State<'_, Desktop>,
-    project_id: String,
-    file_id: String,
-    confirmation: String,
-) -> Reply<ProjectView> {
-    let desktop = state.inner().clone();
-    background(move || {
-        let mut active = desktop.0.lock().map_err(message)?;
-        let project = active_mut(&mut active, &project_id)?;
-        project.writable()?;
-        project.stop_watcher();
-        match trash::archive_file(project, &file_id, &confirmation) {
-            Ok(repo) => replace_active(&mut active, Opened::new(repo, &app)?, &app),
-            Err(error) => {
-                project.start_watcher(&app);
-                Err(message(error))
-            }
-        }
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn remove_project(
-    app: AppHandle,
-    state: State<'_, Desktop>,
-    project_id: String,
-    confirmation: String,
-) -> Reply<()> {
-    let desktop = state.inner().clone();
-    background(move || {
-        let mut active = desktop.0.lock().map_err(message)?;
-        let project = active_mut(&mut active, &project_id)?;
-        project.writable()?;
-        project.stop_watcher();
-        match trash::archive_project(project, &confirmation) {
-            Ok(()) => {
-                *active = None;
-                Ok(())
-            }
-            Err(error) => {
-                project.start_watcher(&app);
-                Err(message(error))
-            }
-        }
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn list_trash(root: String) -> Reply<Vec<trash::TrashItem>> {
-    background(
-        move || match Container::discover(Path::new(&root)).map_err(message)? {
-            Some(container) => container.list_trash().map_err(message),
-            None => Ok(Vec::new()),
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn restore_trash(
-    app: AppHandle,
-    state: State<'_, Desktop>,
-    root: String,
-    id: String,
-) -> Reply<ProjectView> {
-    let desktop = state.inner().clone();
-    background(move || {
-        let mut active = desktop.0.lock().map_err(message)?;
-        if let Some(project) = active.as_mut() {
-            project.stop_watcher();
-        }
-        let result = (|| {
-            let container = project_container(Path::new(&root))?;
-            let restored = container.restore_trash(&id).map_err(message)?;
-            let repo = container.open(&restored.id).map_err(message)?;
-            replace_active(&mut active, Opened::new(repo, &app)?, &app)
-        })();
-        if result.is_err() {
-            if let Some(project) = active.as_mut() {
-                project.start_watcher(&app);
-            }
-        }
-        result
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn purge_trash(root: String, id: String, confirmation: String) -> Reply<()> {
-    background(move || {
-        Container::for_purge(Path::new(&root))
-            .and_then(|c| c.purge_trash(&id, &confirmation))
-            .map_err(message)
     })
     .await
 }
