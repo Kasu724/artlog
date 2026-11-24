@@ -1,14 +1,3 @@
-.trash-view {
-  width: min(960px, calc(100% - 2 * var(--workspace-padding)));
-  margin: 0 auto;
-  padding: 24px 0 32px;
-}
-
-.trash-view > h1 {
-  margin: 0 0 10px;
-  font: 500 clamp(29px, 3vw, 37px) / 1.15 var(--heading-font);
-}
-
 .trash-location {
   display: flex;
   align-items: baseline;
@@ -24,53 +13,82 @@
   margin-top: 2px;
 }
 
-.trash-empty,
-.trash-list {
-  margin: 20px 0 0;
-  padding: 0;
-}
-
 .trash-empty {
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  margin: 0;
+  padding: 16px 8px;
   color: var(--muted);
 }
 
-.trash-list {
-  display: grid;
-  gap: 10px;
-  list-style: none;
+.trash-view > .error-message {
+  margin-top: 0;
 }
 
-.trash-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
+.trash-view > .error-message p {
+  margin: 0 0 8px;
+}
+
+.trash-register {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.trash-register th,
+.trash-register td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.trash-register thead th {
+  padding-block: 8px;
+  border-bottom-color: var(--control-border);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trash-register thead th:first-child {
+  width: 44px;
+}
+
+.trash-register thead th:nth-child(3) {
+  width: clamp(130px, 17vw, 160px);
+}
+
+.trash-register thead th:last-child {
+  width: clamp(168px, 24vw, 220px);
+}
+
+.trash-register :is(th, td):nth-child(n + 3) {
+  border-left: 1px solid var(--border);
+}
+
+.trash-item-number {
+  font-size: 17px;
 }
 
 .trash-item-details {
-  flex: 1 1 260px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   min-width: 0;
+  font-weight: 400;
   overflow-wrap: anywhere;
 }
 
-.trash-item-details h2 {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 0;
-  font-size: 15px;
+.trash-item-details > .icon {
+  width: 21px;
+  height: 21px;
+  margin-top: 2px;
+  color: var(--purple);
 }
 
-.trash-item-details h2 .icon {
-  flex: none;
-  color: var(--purple);
+.trash-item-details h2 {
+  margin: 0;
+  color: var(--text);
+  font: 500 clamp(18px, 2.3vw, 23px)/1.2 var(--heading-font);
 }
 
 .trash-item-details p {
@@ -82,7 +100,7 @@
 .trash-item-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  gap: 3px 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -90,11 +108,79 @@
   color: var(--warning-text);
 }
 
+.trash-status {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--purple-surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.trash-status.purge-pending {
+  background: var(--warning-surface);
+  color: var(--warning-text);
+}
+
 .trash-item-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-left: auto;
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.trash-restore-action:not(:disabled) {
+  border-color: var(--purple);
+  background: transparent;
+}
+
+.trash-restore-action:hover:not(:disabled) {
+  background: var(--purple-surface);
+}
+
+.trash-delete-action:not(:disabled) {
+  color: var(--warning-text);
+}
+
+@media (max-width: 680px) {
+  .trash-register,
+  .trash-register tbody {
+    display: block;
+  }
+
+  .trash-register thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .trash-register tbody tr {
+    display: grid;
+    grid-template-columns: 3ch minmax(0, 1fr);
+    align-items: start;
+    gap: 8px 10px;
+    padding: 12px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .trash-register tbody tr > :is(th, td) {
+    width: auto;
+    padding: 0;
+    border: 0;
+  }
+
+  .trash-item-status,
+  .trash-actions-cell {
+    grid-column: 2;
+  }
+
+  .trash-item-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
 }
 
 .management-form p,

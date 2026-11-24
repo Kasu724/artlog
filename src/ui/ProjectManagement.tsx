@@ -62,17 +62,22 @@ export function TrashView({
   onPurge: (item: TrashItem) => void;
 }) {
   return (
-    <section className="trash-view" aria-labelledby="trash-heading">
+    <section
+      className="library-view trash-view"
+      aria-labelledby="trash-heading"
+    >
       <button
         type="button"
-        className="text-button back-button"
+        className="quiet-button back-button"
         onClick={onBack}
         disabled={busy}
       >
         <span aria-hidden="true">←</span> Back
       </button>
-      <h1 id="trash-heading">ArtLog trash</h1>
-      <p className="trash-location" title={root}>
+      <h1 className="page-heading" id="trash-heading">
+        ArtLog trash
+      </h1>
+      <p className="library-location" title={root}>
         <Icon name="folder" />
         <bdi>{root}</bdi>
       </p>
@@ -94,68 +99,111 @@ export function TrashView({
         <p className="trash-empty">Trash is empty for this folder.</p>
       )}
       {items.length > 0 && (
-        <ul className="trash-list" role="list" aria-busy={loading}>
-          {items.map((item) => {
-            const date = formatDate(item.removedAt);
-            const subject = item.filePath ?? item.projectName;
-            return (
-              <li className="trash-item" key={item.id}>
-                <div className="trash-item-details">
-                  <h2>
-                    <Icon
-                      name={item.kind === "fileHistory" ? "file" : "folder"}
-                    />
-                    <bdi>{subject}</bdi>
-                  </h2>
-                  {item.filePath && (
-                    <p>
-                      File history from <bdi>{item.projectName}</bdi>
-                    </p>
-                  )}
-                  <p className="trash-item-meta">
-                    <time dateTime={item.removedAt} title={date.full}>
-                      Removed {date.day} {date.time}
-                    </time>
-                    <span>{formatBytes(item.size)} archived</span>
-                    {item.activeSize != null && (
-                      <span>
-                        {formatBytes(item.activeSize)} in project after removal
-                      </span>
-                    )}
-                  </p>
-                  {item.purgePending && (
-                    <p className="trash-item-warning">
-                      Permanent deletion was interrupted. You can finish
-                      deleting this archive.
-                    </p>
-                  )}
-                </div>
-                <div className="trash-item-actions">
-                  {!item.purgePending && (
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      aria-label={`Restore from trash — ${subject}`}
-                      onClick={() => onRestore(item)}
-                      disabled={busy || loading}
+        <table
+          className="trash-register"
+          role="table"
+          aria-label="Archived histories"
+        >
+          <thead role="rowgroup">
+            <tr role="row">
+              <th scope="col" role="columnheader">
+                No.
+              </th>
+              <th scope="col" role="columnheader">
+                Item
+              </th>
+              <th scope="col" role="columnheader">
+                Status
+              </th>
+              <th scope="col" role="columnheader">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody role="rowgroup">
+            {items.map((item, index) => {
+              const date = formatDate(item.removedAt);
+              const subject = item.filePath ?? item.projectName;
+              return (
+                <tr key={item.id} role="row">
+                  <td className="register-number trash-item-number" role="cell">
+                    {String(index + 1).padStart(2, "0")}
+                  </td>
+                  <th scope="row" role="rowheader">
+                    <div className="trash-item-details">
+                      <Icon
+                        name={item.kind === "fileHistory" ? "file" : "folder"}
+                      />
+                      <div>
+                        <h2>
+                          <bdi>{subject}</bdi>
+                        </h2>
+                        {item.filePath && (
+                          <p>
+                            File history from <bdi>{item.projectName}</bdi>
+                          </p>
+                        )}
+                        <p className="trash-item-meta">
+                          <time dateTime={item.removedAt} title={date.full}>
+                            Removed {date.day} {date.time}
+                          </time>
+                          <span>{formatBytes(item.size)} archived</span>
+                          {item.activeSize != null && (
+                            <span>
+                              {formatBytes(item.activeSize)} in project after
+                              removal
+                            </span>
+                          )}
+                        </p>
+                        {item.purgePending && (
+                          <p className="trash-item-warning">
+                            Permanent deletion was interrupted. You can finish
+                            deleting this archive.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </th>
+                  <td role="cell" className="trash-item-status">
+                    <span
+                      className={
+                        item.purgePending
+                          ? "trash-status purge-pending"
+                          : "trash-status"
+                      }
                     >
-                      Restore from trash
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="danger-button"
-                    aria-label={`Permanently delete — ${subject}`}
-                    onClick={() => onPurge(item)}
-                    disabled={busy || loading}
-                  >
-                    Permanently delete
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                      {item.purgePending ? "Deletion interrupted" : "Archived"}
+                    </span>
+                  </td>
+                  <td role="cell" className="trash-actions-cell">
+                    <div className="trash-item-actions">
+                      {!item.purgePending && (
+                        <button
+                          type="button"
+                          className="secondary-button trash-restore-action"
+                          aria-label={`Restore from trash — ${subject}`}
+                          onClick={() => onRestore(item)}
+                          disabled={busy || loading}
+                        >
+                          Restore from trash
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="quiet-button trash-delete-action"
+                        aria-label={`Permanently delete — ${subject}`}
+                        onClick={() => onPurge(item)}
+                        disabled={busy || loading}
+                      >
+                        Permanently delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
     </section>
   );
