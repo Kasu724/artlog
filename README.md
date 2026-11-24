@@ -12,50 +12,38 @@ has no outbound traffic when the device is connected.
 
 ## Use ArtLog
 
-1. Choose **Open a .clip file** to start or reopen its version history. Use
-   **Recently opened** in the home sidebar to return to a project, or
-   **Browse saved histories** to find other histories by folder.
-2. Keep editing in Clip Studio Paint. ArtLog captures stable saves on the **main**
-   timeline and skips identical automatic snapshots. Use **New checkpoint** to
-   name a milestone and add a note. Change tracking and save delay in Settings.
-3. Select a version and file to inspect, compare, or restore. Pick a comparison
-   from the **Previous version** menu or click the previous preview area and
-   choose a checkpoint from History. **Restore as copy**
-   is the default. It checks the restored bytes and refuses to overwrite an
-   existing file. To replace a working file, close it in Clip Studio Paint, confirm
-   the named target, and let ArtLog record its safety snapshot first.
+1. Choose **Open a .clip file** to start or reopen its history. **Recently
+   opened** also reopens a file's history. Select **ArtLog** in the project
+   header to return home.
+2. Keep editing in Clip Studio Paint. ArtLog captures stable saves and skips
+   identical snapshots. Use the pencil beside a version to edit its title and
+   notes. Edits stay with that history and preserve the saved version ID.
+3. Select a version to inspect, compare, or restore. Choose a comparison from
+   the **Previous version** menu or click the previous preview and choose a
+   version in History. **Restore as a copy** verifies the restored bytes and
+   requires a new destination. To replace a working file, close it in Clip
+   Studio Paint, confirm the named target, and let ArtLog record a safety
+   snapshot first.
 
-ArtLog automatically reads the embedded canvas preview from each saved
-`.clip` version and shows a thumbnail in History. Existing versions generate
-their thumbnails when viewed.
-You can also attach a PNG or JPEG export, which takes priority over the
-embedded preview. Use **Restore as copy** to open and export an older version
-whose embedded preview is unavailable. Previews are flattened, scaled to at most
-1,024 pixels on the long edge, and may not match editor color management.
+ArtLog reads the embedded canvas preview from each saved `.clip` version and
+shows a thumbnail in History. Previews are flattened, scaled to at most 1,024
+pixels on the long edge, and may differ from the editor's color management.
 Two available previews can be panned and zoomed together. Matching dimensions
-allow overlay and pixel difference. All versions remain exactly restorable
-when previews are missing.
+allow overlay and pixel difference. Restore remains available when a preview
+is missing.
 
-## Manage tracked files and history
+## Manage a file's history
 
-- In **Files** or **Settings**, use **Stop tracking** to stop capturing future
-  saves and keep earlier versions. Select the file again in Settings to resume
-  tracking. When ArtLog recognizes a same folder rename, it updates the
-  history directory and keeps the same checkpoints, notes, and previews.
-  This also works on reopen if ArtLog previously recorded the file's identity.
-  If it cannot identify a rename, open the original history through **Browse
-  saved histories** and use **Link renamed file** in Files or Settings.
-- **Delete file history** archives the pre-delete project, stops tracking the
-  selected file, and removes its saved versions from the active timeline.
-  The rewrite can change checkpoint IDs. **Remove project** in Settings sends
-  that file's history and settings to ArtLog trash. Both actions leave working
-  artwork in place.
-- Open **ArtLog trash** from Settings or from the **Browse saved histories**
-  screen. **Restore from trash** recovers the archived project. If the active
-  project has changed since a file deletion, recovery opens a separate
-  read-only history. **Permanently delete** erases the selected archive after
-  a separate typed confirmation. ArtLog keeps trash until you restore or
-  permanently delete it.
+- In **Settings**, pause or resume automatic capture and change the time ArtLog
+  waits for a save to settle.
+- ArtLog can recognize a same-folder rename and carry the history forward.
+  If the rename is not recognized, reopen the history from **Recently opened**
+  and use **Link renamed file** in Settings.
+- **Delete file history** permanently removes the saved versions, previews,
+  titles, notes, and settings for that file after you type its exact filename.
+  ArtLog returns to the homepage and leaves the working artwork in place.
+  Opening the file again starts a fresh history. If deletion is interrupted,
+  reopen the location to finish the confirmed operation.
 
 ## History compression
 
@@ -73,39 +61,35 @@ stored content-object bytes. **Portable history** shows the current logical size
 of the open project's history, excluding preview files.
 
 Before downgrading to a build without compression support, run **Convert history
-to raw** in each affected project and wait for **Raw layout verified**. For
-history in **ArtLog trash**, restore it with this version first, then convert
-the restored history. The conversion turns off compression for the project,
-expands its objects and verifies the raw layout while preserving saved versions,
-previews, and working artwork. Raw conversion can need more disk space. If either
-operation stops, free space if needed and run the same operation again. Keep this
-version of ArtLog available until each conversion finishes successfully.
+to raw** in each affected project and wait for **Raw layout verified**. The
+conversion turns off compression, expands its objects, and verifies the raw
+layout while preserving saved versions, previews, and working artwork. Raw
+conversion can need more disk space. If either operation stops, free space if
+needed and run the same operation again. Keep this version of ArtLog available
+until each conversion finishes successfully.
 
 ## Backup and recovery
 
-ArtLog upgrades earlier individual histories to filename-based directories.
-Use **Browse saved histories** to access old shared folder timelines. They
-remain available for browsing and restoring copies, including copies of
-historical file types. Reopen the location to resume an interrupted upgrade
-or history move.
+ArtLog upgrades earlier single-file histories to filename-based directories.
+Shared folder histories and trash archives from earlier releases stay on disk.
+Access those histories with an earlier release that supports their storage
+format.
 
 Copy the entire project folder, including **`.artlog/`**, while ArtLog and
-the art app are closed. All tracked files in that folder share one
-`.artlog/` container. A file named `Cover.clip` normally stores its history
-in `.artlog/projects/Cover.clip/`. ArtLog can keep a history in its existing
-directory if the preferred name is occupied. Content objects are reused
-across versions of the same file.
-`.artlog/trash/` travels with the folder too. The SQLite index in your local
+Clip Studio Paint are closed. Separate `.clip` projects in the same folder
+share one `.artlog/` container. A file named `Cover.clip` normally stores
+its history in `.artlog/projects/Cover.clip/`. ArtLog can keep a history in
+its existing directory if the preferred name is occupied. Content objects are
+reused across versions of the same file. The SQLite index in your local
 application data can be rebuilt from the portable history. Settings includes
-a health check. An upgrade, history rewrite, or trash restore needs room for
-staged history. Open a project again to catch stable saves made while ArtLog
+a health check. Open a project again to catch stable saves made while ArtLog
 was closed.
 
 If an in-place restore is interrupted, the app pauses capture and names the
 recovery folder under the project's `staging/` directory. Close the art app,
-then inspect `recovery.json` there. It records the target, safety checkpoint, and the
-temporary folder that may contain the displaced original. Restore the safety
-checkpoint as a separate copy or copy out `previous.bin` if present. Once you
+then inspect `recovery.json` there. It records the target, safety snapshot, and
+the temporary folder that may contain the displaced original. Restore the safety
+snapshot as a separate copy or copy out `previous.bin` if present. Once you
 have verified the working file and retained any needed versions, close ArtLog
 and **move** the reported journal folder to a backup location outside
 `staging/` to resume capture. Keep the journal and recovery files

@@ -5,23 +5,15 @@
 - Compress eligible history chunks losslessly with Zstandard. Settings can
   repack existing history, disable compression for new objects, or verify a
   conversion back to raw storage before downgrading.
-- Reopen recent projects from the home sidebar.
-- Choose a previous version above its preview, or click the preview area and
-  pick a checkpoint from the timeline.
-- Track individual `.clip` files. Browse and restore copies from existing
-  shared folder timelines.
-- Store each tracked file's history under its filename in `.artlog/projects/`.
-  Detect same folder renames using the file's filesystem identity and carry
-  its history forward under the new name.
-  Existing individual histories adopt the new layout.
-- Stop tracking a file, delete its active history, or remove a project.
-  Recover archives from ArtLog trash or permanently delete them with a
-  separate confirmation.
-- Generate thumbnails automatically from saved `.clip` canvas previews and
-  display them in History, including existing checkpoints.
-- Track and capture Clip Studio Paint (`.clip`) files. Attach PNG or JPEG
-  exports for visual comparisons.
-- Restore historical files of other formats as verified copies.
+- Open one `.clip` file at a time and reopen recent projects from home.
+- Capture stable saves automatically. Edit a saved version's title and notes
+  from History.
+- Compare versions using the Previous version menu or select one from the
+  timeline. ArtLog uses embedded canvas previews.
+- Store each file's history under its filename in `.artlog/projects/` and
+  carry that history forward when ArtLog recognizes a same-folder rename.
+- Permanently delete a file's saved history from Settings with a typed
+  filename confirmation. The working artwork stays in place.
 
 ## 0.1.0
 
