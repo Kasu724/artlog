@@ -1228,14 +1228,11 @@ export default function App() {
 
             {view === "files" && (
               <FilesView
-                root={project.root}
+                project={project}
                 files={workingFiles}
-                settings={project.settings}
                 onGoSettings={() => setView("settings")}
-                identities={project.files}
                 actions={fileActions}
                 busy={busy}
-                readOnly={!!project.openWarning}
               />
             )}
 
