@@ -1,221 +1,277 @@
 .welcome-layout {
-  flex: 1;
-  width: 100%;
-  min-height: 0;
   display: flex;
+  flex: 1;
   flex-direction: column;
-  justify-content: center;
   align-items: center;
-  padding: 38px 22px 48px;
+  gap: 20px;
+  min-width: 0;
+  padding: clamp(30px, 7vh, 74px) var(--workspace-padding);
   text-align: center;
 }
-.welcome-mark {
-  width: min(150px, 34vw);
-  margin-bottom: 13px;
+
+.welcome-layout > .back-button {
+  align-self: flex-start;
+  margin: -10px 0 0;
 }
-.welcome-mark svg {
-  display: block;
-  width: 100%;
-  overflow: visible;
-}
-.welcome-mark svg > path {
-  stroke: var(--text);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.welcome-mark .mark-art {
-  stroke: var(--purple);
-}
-.welcome-mark .mark-spark {
-  fill: var(--accent);
-  stroke: none;
-}
-.welcome-mark .mark-flourish {
-  stroke: var(--purple);
-  stroke-width: 1.8;
-}
+
 .welcome-layout h1 {
   margin: 0;
-  font: 600 clamp(42px, 5vw, 58px)/1.08 var(--heading-font);
-  letter-spacing: -1.8px;
+  font: 600 clamp(52px, 8vw, 88px)/1.04 var(--heading-font);
+  letter-spacing: -0.04em;
 }
+
 .welcome-subtitle {
-  margin: 12px 0 29px;
+  margin: 20px 0 0;
   color: var(--muted);
-  font-size: clamp(15px, 2vw, 19px);
+  font: italic clamp(17px, 2vw, 22px)/1.4 var(--heading-font);
 }
-.welcome-action {
-  min-width: 250px;
-  min-height: 48px;
-  gap: 11px;
-  font-size: 15px;
-}
-.welcome-action .icon {
-  width: 19px;
-  height: 19px;
-}
+
 .welcome-options {
   display: grid;
-  gap: 10px;
-}
-.project-choices {
-  display: grid;
-  gap: 8px;
-  padding: 0;
-  list-style: none;
-}
-.project-choices button {
-  width: 100%;
-  justify-content: flex-start;
-  text-align: left;
-}
-.project-choice-name {
-  flex: 1;
-  overflow-wrap: anywhere;
-}
-.project-choice-actions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 12px;
-  margin-top: 24px;
+  width: min(100%, 360px);
+  margin-top: auto;
+  padding-top: 24px;
 }
+
+.welcome-action {
+  min-height: 48px;
+  font-size: 15px;
+}
+
+.welcome-action.secondary-button {
+  border-color: var(--purple);
+  background: transparent;
+}
+
+.welcome-action.secondary-button:hover:not(:disabled) {
+  background: var(--purple-surface);
+}
+
+.welcome-action.secondary-button:disabled {
+  border-color: var(--border);
+}
+
 .welcome-error {
-  width: min(440px, 100%);
+  width: min(100%, 360px);
+  margin-top: 0;
   text-align: left;
 }
 
-.saved-histories {
-  width: min(960px, calc(100% - 48px));
-  margin: auto;
-  padding: 35px 0 42px;
-}
-.back-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 24px;
-  padding-block: 3px;
-}
-.back-button > span {
-  font-size: 20px;
-  line-height: 1;
-}
-.saved-histories > h1 {
-  margin: 9px 0 7px;
-  font: 500 clamp(34px, 4.5vw, 48px)/1.15 var(--heading-font);
-  letter-spacing: -1.1px;
-}
-.entry-empty {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 92px;
-  padding: 18px;
-  color: var(--muted);
-}
-.entry-empty .icon {
-  width: 25px;
-  height: 25px;
-  color: var(--purple);
-}
-.entry-empty strong {
-  color: var(--text);
-  font-weight: 600;
-}
-.entry-empty p {
-  margin: 3px 0 0;
-}
-.saved-histories > .error-message {
-  margin-top: 14px;
+.home-rail {
+  grid-area: 2 / 1;
+  width: clamp(226px, 32vw, 380px);
+  padding: clamp(24px, 5vh, 50px) clamp(18px, 2.5vw, 30px);
+  border-right: 1px solid var(--border);
+  background: var(--rail);
 }
 
-/* The welcome rail stays useful at narrower desktop widths without squeezing
-   the primary welcome actions. */
-.home-rail {
-  box-sizing: border-box;
-  flex: 0 0 clamp(230px, 25vw, 310px);
-  min-width: 220px;
-  align-self: stretch;
-  padding: 28px 18px;
-  overflow: hidden;
-  border-right: 1px solid var(--border);
-  background: var(--rail, var(--surface));
-}
-.recent-projects {
-  margin-top: 22px;
-}
 .recent-projects h2 {
-  margin: 0 0 13px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 16px;
+  font: 500 22px/1.15 var(--heading-font);
 }
+
+.recent-projects h2::after {
+  flex: 1;
+  border-top: 1px solid var(--control-border);
+  content: "";
+}
+
 .recent-projects ul {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+
 .recent-project-button {
-  box-sizing: border-box;
+  display: grid;
+  justify-content: stretch;
+  gap: 4px;
   width: 100%;
   min-width: 0;
-  justify-content: flex-start;
-  gap: 10px;
+  padding: 10px 13px;
+  background: transparent;
   text-align: left;
 }
-.recent-project-button > span {
+
+.recent-project-button > bdi {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.recent-project-button .icon {
-  flex: 0 0 18px;
-  width: 18px;
-  height: 18px;
-  color: var(--purple);
-}
+
+.recent-project-location,
 .recent-projects-empty {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 12px;
+  font-weight: 400;
 }
 
-@media (max-width: 620px) {
-  .welcome-layout {
-    padding-inline: 18px;
-  }
-  .welcome-mark {
-    width: 120px;
-  }
-  .saved-histories {
-    width: calc(100% - 32px);
-    padding-top: 22px;
-  }
-  .home-rail {
-    flex-basis: 210px;
-    min-width: 190px;
-    padding: 22px 12px;
-  }
+.library-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(960px, calc(100% - 2 * var(--workspace-padding)));
+  margin: 0 auto;
+  padding: 24px 0 32px;
 }
-@media (max-height: 650px) {
-  .welcome-layout {
-    padding-block: 22px;
-  }
-  .welcome-mark {
-    width: 110px;
-    margin-bottom: 6px;
-  }
-  .welcome-subtitle {
-    margin-bottom: 18px;
-  }
-  .saved-histories {
-    padding-block: 20px;
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.back-button > span {
+  font-size: 19px;
+  line-height: 1;
+}
+
+.library-view > .page-heading {
+  margin-bottom: 0;
+}
+
+.library-location {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 14px 8px;
+  border-bottom: 1px solid var(--control-border);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.library-location .icon {
+  width: 21px;
+  height: 21px;
+  color: var(--text);
+}
+
+.project-choices {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-choices li + li {
+  border-top: 1px solid var(--border);
+}
+
+.project-choice {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: clamp(10px, 2vw, 20px);
+  width: 100%;
+  padding: 14px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.project-choice:hover:not(:disabled),
+.project-choice:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.project-choice:disabled {
+  color: var(--muted);
+}
+
+.register-number {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.project-choice .register-number {
+  min-width: 2.75ch;
+  padding: 7px 12px 7px 0;
+  border-right: 1px solid var(--control-border);
+  font-size: 20px;
+}
+
+.project-choice-details {
+  display: grid;
+  gap: 3px;
+}
+
+.project-choice-name {
+  font: 500 clamp(19px, 2.6vw, 25px)/1.15 var(--heading-font);
+  overflow-wrap: anywhere;
+}
+
+.project-choice-type {
+  color: var(--muted);
+}
+
+.project-choice > .icon {
+  width: 23px;
+  height: 23px;
+  color: var(--purple);
+}
+
+.project-choice > .icon-chevron {
+  width: 16px;
+  height: 16px;
+  transform: rotate(-90deg);
+}
+
+.project-choice-actions {
+  display: flex;
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.project-choice-actions > button {
+  width: 100%;
+  padding-block: 12px;
+  border-top: 1px solid var(--purple);
+  border-radius: 0;
+  text-align: left;
+}
+
+.entry-empty {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 92px;
+  padding: 18px 8px;
+  color: var(--muted);
+}
+
+.entry-empty .icon {
+  width: 25px;
+  height: 25px;
+  color: var(--purple);
+}
+
+.entry-empty strong {
+  color: var(--text);
+}
+
+.entry-empty p {
+  margin: 3px 0 0;
+}
+
+@media (max-width: 600px) {
+  .home-rail {
+    grid-area: 3 / 1 / auto / -1;
+    width: 100%;
+    border-top: 1px solid var(--border);
+    border-right: 0;
   }
 }

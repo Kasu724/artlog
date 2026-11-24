@@ -72,7 +72,7 @@ export default function App() {
   const [launcher, setLauncher] = useState(false);
   const [folderChoice, setFolderChoice] = useState<{
     root: string;
-    projects: ProjectSummary[];
+    projects: ProjectSummary[] | null;
   } | null>(null);
   const [trashRoot, setTrashRoot] = useState("");
   const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
@@ -239,6 +239,7 @@ export default function App() {
       });
       if (typeof path !== "string") return;
       setBusy(true);
+      setFolderChoice({ root: path, projects: null });
       setFolderChoice({
         root: path,
         projects: await artlog.listProjects(path),
