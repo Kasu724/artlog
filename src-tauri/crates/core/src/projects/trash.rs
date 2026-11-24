@@ -60,6 +60,14 @@ enum Move {
         before: Option<String>,
         after: String,
     },
+    Delete {
+        project: String,
+        directory: String,
+        filename: String,
+        generation: String,
+        inventory: BTreeMap<String, Owned>,
+        checksum: String,
+    },
 }
 
 pub fn archive_file(repo: &Repository, file: &str, confirmation: &str) -> Result<Repository> {
@@ -211,6 +219,55 @@ pub fn archive_project(repo: &Repository, confirmation: &str) -> Result<()> {
     finish_move(&container)
 }
 
+pub fn delete_single_history(repo: &Repository, confirmation: &str) -> Result<()> {
+    let container = active_container(repo)?;
+    let _location = container.lock()?;
+    let journal = container.dir.join("move.json");
+    if exists(&journal)? {
+        let pending: Move = read_json(&journal)?;
+        if matches!(&pending, Move::Delete { project, filename, .. } if project == repo.id() && filename == confirmation)
+        {
+            let _project = container.project_lock(repo.id(), true)?;
+            return finish_move(&container);
+        }
+        return Err(Error::Invalid(
+            "Reopen the project location to finish the interrupted history operation.".into(),
+        ));
+    }
+
+    let _project = repo.with_write_lock()?;
+    ensure_no_restore(repo)?;
+    let summary = describes(repo)?;
+    let filename = summary.path.filter(|_| summary.mode == Mode::SingleFile);
+    if filename.as_deref() != Some(confirmation) {
+        return Err(Error::Invalid(
+            "Enter the exact .clip filename to permanently delete its history.".into(),
+        ));
+    }
+    let directory = component(repo.metadata())?.to_owned();
+    let generation = project(repo.metadata())?.generation;
+    let staged = working_path(&container, repo.id(), "delete")?;
+    if exists(&staged)? {
+        return Err(Error::Invalid(
+            "The history deletion location is occupied.".into(),
+        ));
+    }
+    let inventory = inventory(repo.metadata())?;
+    let checksum = digest(&(repo.id(), &directory, confirmation, &generation, &inventory))?;
+    write_move(
+        &container,
+        &Move::Delete {
+            project: repo.id().to_owned(),
+            directory,
+            filename: confirmation.to_owned(),
+            generation,
+            inventory,
+            checksum,
+        },
+    )?;
+    finish_move(&container)
+}
+
 impl Container {
     pub fn list_trash(&self) -> Result<Vec<TrashItem>> {
         let _location = self.lock()?;
@@ -250,7 +307,7 @@ impl Container {
             ));
         }
         let payload = trash_path(self, id)?.join("payload");
-        validate_inventory(&payload, &archived, false)?;
+        validate_inventory(&payload, &archived.inventory, false)?;
         let original = open_payload(self, &payload)?;
         ensure_no_restore(&original)?;
         let original_info = project(&payload)?;
@@ -350,7 +407,7 @@ impl Container {
         }
         if !record.item.purge_pending {
             let payload = trash_path(self, id)?.join("payload");
-            validate_inventory(&payload, &record, false)?;
+            validate_inventory(&payload, &record.inventory, false)?;
             ensure_no_restore(&open_payload(self, &payload)?)?;
             record.item.purge_pending = true;
             write_record_file(self, &record)?;
@@ -521,14 +578,14 @@ fn inventory(dir: &Path) -> Result<BTreeMap<String, Owned>> {
 
 fn validate_inventory(
     payload: &Path,
-    record: &Record,
+    expected: &BTreeMap<String, Owned>,
     partial: bool,
 ) -> Result<BTreeMap<String, Owned>> {
     let actual = inventory(payload)?;
-    if (!partial && actual.len() != record.inventory.len())
+    if (!partial && actual.len() != expected.len())
         || actual
             .iter()
-            .any(|(name, entry)| record.inventory.get(name) != Some(entry))
+            .any(|(name, entry)| expected.get(name) != Some(entry))
     {
         return Err(Error::Corrupt(
             "Archived data differs from its recorded inventory. No unverified paths were removed."
@@ -549,11 +606,23 @@ fn validate_inventory(
 fn finish_purge(container: &Container, id: &str, record: &Record) -> Result<()> {
     let dir = trash_path(container, id)?;
     let payload = dir.join("payload");
-    if exists(&payload)? {
-        let actual = validate_inventory(&payload, record, true)?;
+    remove_inventory(&payload, &record.inventory)?;
+    if children(&dir)? != [dir.join("trash.json")] {
+        return Err(Error::Invalid(
+            "Unexpected files remain in the trash item.".into(),
+        ));
+    }
+    remove_file(&dir.join("trash.json"))?;
+    fs::remove_dir(&dir).map_err(|e| Error::io("remove empty trash item", &dir, e))?;
+    sync_parent(&dir)
+}
+
+fn remove_inventory(payload: &Path, expected: &BTreeMap<String, Owned>) -> Result<()> {
+    if exists(payload)? {
+        let actual = validate_inventory(payload, expected, true)?;
         // Parent entries sort before their children. Remove in reverse order.
         for (name, entry) in actual.into_iter().rev() {
-            let path = owned_path(&payload, &name)?;
+            let path = owned_path(payload, &name)?;
             match entry {
                 Owned::Directory => {
                     check_directory(&path)?;
@@ -567,17 +636,11 @@ fn finish_purge(container: &Container, id: &str, record: &Record) -> Result<()> 
                 }
             }
         }
-        fs::remove_dir(&payload).map_err(|e| Error::io("remove empty archive", &payload, e))?;
-        sync_parent(&payload)?;
+        fs::remove_dir(payload)
+            .map_err(|e| Error::io("remove empty history directory", payload, e))?;
+        sync_parent(payload)?;
     }
-    if children(&dir)? != [dir.join("trash.json")] {
-        return Err(Error::Invalid(
-            "Unexpected files remain in the trash item.".into(),
-        ));
-    }
-    remove_file(&dir.join("trash.json"))?;
-    fs::remove_dir(&dir).map_err(|e| Error::io("remove empty trash item", &dir, e))?;
-    sync_parent(&dir)
+    Ok(())
 }
 
 fn owned_path(payload: &Path, name: &str) -> Result<PathBuf> {
@@ -606,7 +669,9 @@ fn write_move(container: &Container, operation: &Move) -> Result<()> {
 
 fn move_project(operation: &Move) -> &str {
     match operation {
-        Move::Archive { project, .. } | Move::Restore { project, .. } => project,
+        Move::Archive { project, .. }
+        | Move::Restore { project, .. }
+        | Move::Delete { project, .. } => project,
     }
 }
 
@@ -676,11 +741,11 @@ fn finish_move(container: &Container) -> Result<()> {
             }
             if !exists(&payload)? {
                 verify_generation(&active, &before)?;
-                validate_inventory(&active, &record, false)?;
+                validate_inventory(&active, &record.inventory, false)?;
                 move_path(&active, &payload)?;
             }
             verify_generation(&payload, &before)?;
-            validate_inventory(&payload, &record, false)?;
+            validate_inventory(&payload, &record.inventory, false)?;
             if let Some(expected) = &after {
                 if !exists(&active)? {
                     verify_generation(&stage, expected)?;
@@ -734,6 +799,34 @@ fn finish_move(container: &Container) -> Result<()> {
                 }
                 finish_purge(container, &trash, &record)?;
             }
+        }
+        Move::Delete {
+            project: id,
+            directory,
+            filename,
+            generation,
+            inventory,
+            checksum,
+        } => {
+            if checksum != digest(&(&id, &directory, &filename, &generation, &inventory))? {
+                return Err(Error::Corrupt(
+                    "History deletion journal verification failed.".into(),
+                ));
+            }
+            let active = container.project_directory(&directory)?;
+            let staged = working_path(container, &id, "delete")?;
+            if exists(&active)? {
+                verify_generation(&active, &generation)?;
+                let repo = open_payload(container, &active)?;
+                if repo.id() != id || describes(&repo)?.path.as_deref() != Some(filename.as_str()) {
+                    return Err(Error::Corrupt(
+                        "History deletion does not match the project.".into(),
+                    ));
+                }
+                validate_inventory(&active, &inventory, false)?;
+                move_path(&active, &staged)?;
+            }
+            remove_inventory(&staged, &inventory)?;
         }
     }
     remove_file(&journal)

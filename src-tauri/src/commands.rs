@@ -294,7 +294,18 @@ fn view(repo: &Opened, app: &AppHandle) -> Reply<ProjectView> {
         can_repack_history: repo.can_repack_history,
         size: repo.repository_size().map_err(message)?,
         recovery_paths: repo.recovery_paths().map_err(message)?,
-        commits: history.into_iter().map(Version::from).collect(),
+        commits: history
+            .into_iter()
+            .map(|commit| {
+                let mut version = Version::from(commit);
+                // Optional presentation metadata cannot block access to saved artwork.
+                if let Ok(Some(details)) = repo.version_details(&version.id) {
+                    version.title = details.title;
+                    version.note = details.note;
+                }
+                version
+            })
+            .collect(),
         capture: repo.capture.lock().map_err(message)?.clone(),
         project: summary,
         files,
@@ -486,6 +497,24 @@ pub(crate) async fn create_checkpoint(
     on_project(state, project_id, move |repo| {
         repo.writable()?;
         repo.capture(Kind::Checkpoint, &title, note.trim())
+            .map_err(message)?;
+        view(repo, &app)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn update_version_details(
+    app: AppHandle,
+    state: State<'_, Desktop>,
+    project_id: String,
+    id: String,
+    title: String,
+    note: String,
+) -> Reply<ProjectView> {
+    on_project(state, project_id, move |repo| {
+        repo.writable()?;
+        repo.update_version_details(&id, &title, &note)
             .map_err(message)?;
         view(repo, &app)
     })
@@ -727,6 +756,38 @@ fn active_mut<'a>(active: &'a mut Option<Opened>, id: &str) -> Reply<&'a mut Ope
         .as_mut()
         .filter(|project| project.id == id)
         .ok_or_else(|| "That project is no longer open.".to_owned())
+}
+
+#[tauri::command]
+pub(crate) async fn delete_history(
+    app: AppHandle,
+    state: State<'_, Desktop>,
+    project_id: String,
+    confirmation: String,
+) -> Reply<()> {
+    let desktop = state.inner().clone();
+    background(move || {
+        let mut active = desktop.0.lock().map_err(message)?;
+        let project = active_mut(&mut active, &project_id)?;
+        project.writable()?;
+        project.stop_watcher();
+        match trash::delete_single_history(project, &confirmation) {
+            Ok(()) => {
+                if let Ok(data) = app.path().app_local_data_dir() {
+                    let _ = ProjectIndex::discard(&data.join("index"), project.id());
+                }
+                *active = None;
+                Ok(())
+            }
+            Err(error) => {
+                if !project.pending_history_operation().unwrap_or(true) {
+                    project.start_watcher(&app);
+                }
+                Err(message(error))
+            }
+        }
+    })
+    .await
 }
 
 #[tauri::command]

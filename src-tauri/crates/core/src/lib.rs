@@ -85,6 +85,12 @@ pub struct Commit {
     #[serde(default)]
     pub files: Vec<Entry>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VersionDetails {
+    pub title: String,
+    pub note: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Health {
@@ -326,6 +332,48 @@ impl Repository {
         }
         Ok(c)
     }
+    pub fn version_details(&self, id: &str) -> Result<Option<VersionDetails>> {
+        valid_id(id)?;
+        let directory = self.metadata.join("version-details");
+        if !projects::exists(&directory)? {
+            return Ok(None);
+        }
+        check_directory(&directory)?;
+        let path = directory.join(format!("{id}.json"));
+        if !projects::exists(&path)? {
+            return Ok(None);
+        }
+        read_json(&path).map(Some)
+    }
+
+    pub fn update_version_details(&self, id: &str, title: &str, note: &str) -> Result<()> {
+        let title = title.trim();
+        let note = note.trim();
+        if title.is_empty() || title.chars().count() > 100 || note.chars().count() > 1000 {
+            return Err(Error::Invalid(
+                "Enter a version title of up to 100 characters and a note of up to 1,000.".into(),
+            ));
+        }
+        valid_id(id)?;
+        let _guard = self.with_write_lock()?;
+        if !self.history()?.iter().any(|version| version.id == id) {
+            return Err(Error::Invalid(
+                "That version is no longer in this history.".into(),
+            ));
+        }
+        // Keep edits separate from the hashed commit and its parent links.
+        self.version_details(id)?;
+        let directory = self.metadata.join("version-details");
+        projects::ensure_dir(&directory)?;
+        atomic_json(
+            &directory.join(format!("{id}.json")),
+            &VersionDetails {
+                title: title.into(),
+                note: note.into(),
+            },
+        )
+    }
+
     pub fn capture(&self, kind: Kind, title: &str, note: &str) -> Result<Option<Commit>> {
         let _guard = self.with_write_lock()?;
         if matches!(kind, Kind::Auto | Kind::Checkpoint) && !self.recovery_paths()?.is_empty() {

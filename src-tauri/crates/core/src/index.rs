@@ -48,6 +48,19 @@ pub struct IndexedFile {
 }
 
 impl ProjectIndex {
+    pub fn discard(cache_root: &Path, repository_id: &str) -> Result<(), IndexError> {
+        validate_repository_id(repository_id)?;
+        for suffix in [".sqlite3-wal", ".sqlite3-shm", ".sqlite3"] {
+            let path = cache_root.join(format!("{repository_id}{suffix}"));
+            match fs::remove_file(path) {
+                Ok(()) => (),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+
     /// Opens the index and reconciles it with authoritative portable history.
     /// Missing, stale-schema, or corrupt databases are preserved and rebuilt.
     pub fn open_or_rebuild(

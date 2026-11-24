@@ -1096,7 +1096,7 @@ fn component(path: &Path) -> Result<&str> {
         .ok_or_else(|| Error::Invalid("An ArtLog path is not valid Unicode.".into()))
 }
 
-fn ensure_dir(dir: &Path) -> Result<()> {
+pub(super) fn ensure_dir(dir: &Path) -> Result<()> {
     match fs::create_dir(dir) {
         Ok(()) => sync_parent(dir),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => check_directory(dir),
