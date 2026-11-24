@@ -392,7 +392,7 @@ export function PreviewComparison({
       }}
     >
       <div className="section-heading compare-heading">
-        <h3>Compare versions</h3>
+        <h4>Compare versions</h4>
         <button
           className="text-button"
           disabled={!path}
@@ -480,64 +480,61 @@ export function PreviewComparison({
         </label>
       )}
       {pickerOpen && (
-        <div className="compare-picker-columns">
-          <div className="compare-picker">
-            {candidateState === "loading" ? (
-              <span className="muted-caption">
-                Finding versions containing this file…
-              </span>
-            ) : candidateState === "error" ? (
-              <div className="compare-error" role="alert">
-                {candidateError}
-                <button
-                  className="text-button"
-                  onClick={() => {
-                    setCandidates(null);
-                    setCandidateState("idle");
-                    setCandidateRetry((value) => value + 1);
-                  }}
-                >
-                  Retry
-                </button>
-              </div>
-            ) : candidates?.length ? (
-              <label>
-                Previous version
-                <select
-                  aria-label="Compare with version"
-                  value={compareId}
-                  onChange={(event) => {
-                    const candidate = candidates.find(
-                      ({ id }) => id === event.target.value,
-                    );
-                    chooseVersion(candidate ?? null);
-                  }}
-                >
-                  <option value="">Choose an earlier version</option>
-                  {candidates.map((commit) => (
-                    <option key={commit.id} value={commit.id}>
-                      {commit.title} · {formatDate(commit.timestamp).day}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : candidateState === "ready" ? (
-              <span className="muted-caption">
-                No other version contains {path}.
-              </span>
-            ) : (
-              <span className="muted-caption">
-                Choose a version of this file to compare.
-              </span>
-            )}
-          </div>
-          <div aria-hidden="true" />
+        <div className="compare-picker">
+          {candidateState === "loading" ? (
+            <span className="muted-caption">
+              Finding versions containing this file…
+            </span>
+          ) : candidateState === "error" ? (
+            <div className="compare-error" role="alert">
+              {candidateError}
+              <button
+                className="text-button"
+                onClick={() => {
+                  setCandidates(null);
+                  setCandidateState("idle");
+                  setCandidateRetry((value) => value + 1);
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          ) : candidates?.length ? (
+            <label>
+              Previous version
+              <select
+                aria-label="Compare with version"
+                value={compareId}
+                onChange={(event) => {
+                  const candidate = candidates.find(
+                    ({ id }) => id === event.target.value,
+                  );
+                  chooseVersion(candidate ?? null);
+                }}
+              >
+                <option value="">Choose an earlier version</option>
+                {candidates.map((commit) => (
+                  <option key={commit.id} value={commit.id}>
+                    {commit.title} · {formatDate(commit.timestamp).day}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : candidateState === "ready" ? (
+            <span className="muted-caption">
+              No other version contains {path}.
+            </span>
+          ) : (
+            <span className="muted-caption">
+              Choose a version of this file to compare.
+            </span>
+          )}
         </div>
       )}
       {showsCombinedPreview && (
         <div className="compare-version-labels">
           <span title={comparisonCommit?.title}>
-            Earlier version
+            Previous version
             {comparisonCommit ? ` · ${comparisonCommit.title}` : ""}
           </span>
           <span title={currentCommit.title}>
@@ -607,7 +604,7 @@ export function PreviewComparison({
         <div className="compare-slots">
           <PreviewPane
             label="Previous version"
-            path={path}
+            path={selection?.path ?? path}
             commit={comparisonCommit}
             state={comparison.result}
             loading={comparison.result.state === "loading"}
@@ -753,10 +750,6 @@ function PreviewPane({
         onPick();
       }}
     >
-      <span className="preview-card-label" title={commit?.title}>
-        {label}
-        {commit && <small>{commit.title}</small>}
-      </span>
       {pickerArmed && (
         <p className="timeline-picker-hint" role="status">
           Choose a checkpoint in History.
@@ -826,6 +819,10 @@ function PreviewPane({
           )}
         </div>
       )}
+      <span className="preview-card-label" title={commit?.title}>
+        {label}
+        {commit && <small>{commit.title}</small>}
+      </span>
       {adapterNote && (
         <span
           className="preview-provenance"

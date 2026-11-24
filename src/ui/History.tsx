@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { artlog } from "../api";
 import type { CommitSummary, CommitThumbnail, FileVersion } from "../types";
 import { formatBytes, formatDate, isClipFile } from "./format";
@@ -45,7 +45,6 @@ export function HistoryTimeline({
       className={`timeline-panel${comparisonCandidates ? " choosing-comparison" : ""}`}
       aria-label="Version timeline"
     >
-      <h2>History</h2>
       {scopeName && (
         <div className="history-scope">
           <span title={scopeName}>{scopeName}</span>
@@ -111,13 +110,13 @@ function TimelineEntry({
       onClick={onSelect}
       title={commit.title}
     >
-      <span className="timeline-node" aria-hidden="true">
-        {commit.kind === "safety"
-          ? "!"
-          : commit.kind === "checkpoint"
-            ? "◆"
-            : ""}
-      </span>
+      <TimelineThumbnail
+        key={`${previewRevision}:${path ?? ""}`}
+        projectId={projectId}
+        commit={commit}
+        path={path}
+        previewRevision={previewRevision}
+      />
       <span className="timeline-copy">
         <span className="timeline-title">{commit.title}</span>
         <span className="timeline-meta">
@@ -132,13 +131,6 @@ function TimelineEntry({
           {commit.note ||
             `${commit.fileCount} tracked file${commit.fileCount === 1 ? "" : "s"}`}
         </span>
-        <TimelineThumbnail
-          key={`${previewRevision}:${path ?? ""}`}
-          projectId={projectId}
-          commit={commit}
-          path={path}
-          previewRevision={previewRevision}
-        />
       </span>
     </button>
   );
@@ -237,6 +229,7 @@ export function VersionDetail({
   onSelectPath,
   onRestoreCopy,
   onRestoreInPlace,
+  children,
 }: {
   commit: CommitSummary;
   files: FileVersion[];
@@ -246,23 +239,42 @@ export function VersionDetail({
   onSelectPath: (path: string) => void;
   onRestoreCopy: () => void;
   onRestoreInPlace: () => void;
+  children?: ReactNode;
 }) {
   const date = formatDate(commit.timestamp);
+  const onlyFile = files.length === 1 ? files[0] : null;
   return (
     <section className="version-card">
       <div className="version-content">
-        <h2>{commit.title}</h2>
-        <time
-          className="detail-date"
-          dateTime={commit.timestamp}
-          title={date.full}
-        >
-          {date.day} · {date.time}
-        </time>
-        {commit.note && <p className="detail-note">{commit.note}</p>}
+        <div className="version-heading">
+          <h3>{commit.title}</h3>
+          <span className={`version-kind kind-${commit.kind}`}>
+            {kindName(commit.kind)}
+          </span>
+        </div>
+        <div className="version-meta">
+          <time dateTime={commit.timestamp} title={date.full}>
+            {date.day} · {date.time}
+          </time>
+          {onlyFile && (
+            <span className="version-meta-file" title={onlyFile.path}>
+              <Icon name="file" />
+              <bdi className="version-file-name">{onlyFile.path}</bdi>
+              <span className="version-file-size">
+                {formatBytes(onlyFile.size)}
+              </span>
+            </span>
+          )}
+        </div>
+        {commit.note && (
+          <p className="detail-note">
+            <Icon name="file" />
+            <span>{commit.note}</span>
+          </p>
+        )}
         {files.length === 0 ? (
           <p className="version-empty">No tracked files in this snapshot.</p>
-        ) : (
+        ) : !onlyFile ? (
           <div
             className="version-files"
             role="group"
@@ -284,9 +296,19 @@ export function VersionDetail({
               </button>
             ))}
           </div>
-        )}
+        ) : null}
       </div>
+      {children}
       <div className="restore-actions">
+        {isClipFile(selectedPath) && canReplace && (
+          <button
+            className="quiet-button restore-place"
+            disabled={busy || !selectedPath}
+            onClick={onRestoreInPlace}
+          >
+            Replace working file…
+          </button>
+        )}
         <button
           className="primary-button restore-copy"
           disabled={busy || !selectedPath}
@@ -294,15 +316,6 @@ export function VersionDetail({
         >
           Restore as a copy
         </button>
-        {isClipFile(selectedPath) && canReplace && (
-          <button
-            className="text-button restore-place"
-            disabled={busy || !selectedPath}
-            onClick={onRestoreInPlace}
-          >
-            Replace working file…
-          </button>
-        )}
       </div>
     </section>
   );

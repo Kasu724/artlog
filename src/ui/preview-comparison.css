@@ -8,7 +8,7 @@
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.compare-heading h3 {
+.compare-heading h4 {
   margin: 4px 0 0;
   color: var(--text);
   font: 500 20px/1.2 var(--heading-font);
@@ -28,16 +28,6 @@
   background: var(--surface);
   color: var(--muted);
   font-size: 12px;
-}
-.compare-picker-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
-  margin: 0 0 7px;
-}
-.compare-picker-columns .compare-picker {
-  margin: 0;
-  min-height: 42px;
 }
 .compare-picker label {
   display: flex;
@@ -91,21 +81,16 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--surface);
 }
 .preview-pane.timeline-picker-armed {
-  border-color: var(--purple);
-  box-shadow: inset 0 0 0 1px var(--purple);
+  outline: 1px solid var(--purple);
 }
 .preview-pane.comparison-target {
   cursor: pointer;
 }
 .preview-pane > .preview-timeline-target {
   width: 100%;
-  border: 0;
   color: var(--text);
   font-weight: 600;
   background: var(--inset);
@@ -129,19 +114,17 @@
   font-size: 12px;
 }
 .preview-pane > .preview-card-label {
-  display: block;
-  min-height: 34px;
-  overflow: hidden;
-  padding: 7px 9px;
-  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  padding: 8px 1px 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .preview-card-label small {
-  margin-left: 7px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
@@ -152,13 +135,18 @@
   outline-offset: -3px;
 }
 
+.preview-thumb-stage,
+.preview-state {
+  aspect-ratio: 1.23;
+  min-height: 140px;
+  max-height: clamp(170px, 44vh, 410px);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--inset);
+}
 .preview-thumb-stage {
   position: relative;
-  aspect-ratio: 1.45;
-  min-height: 118px;
-  max-height: 290px;
   overflow: hidden;
-  background: var(--inset);
   cursor: grab;
   touch-action: none;
 }
@@ -179,8 +167,6 @@
 }
 .preview-state {
   display: flex;
-  flex: 1;
-  min-height: clamp(132px, 21vh, 215px);
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -197,6 +183,7 @@
   color: var(--purple);
 }
 .preview-state-error {
+  max-height: none;
   color: var(--warning-text);
 }
 .preview-state small {
@@ -207,7 +194,7 @@
   overflow-wrap: anywhere;
 }
 .preview-provenance {
-  padding: 7px 9px 2px;
+  padding: 4px 1px 2px;
   color: var(--muted);
   font-size: 10px;
   line-height: 1.4;

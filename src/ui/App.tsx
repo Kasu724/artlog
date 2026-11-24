@@ -1122,32 +1122,33 @@ export default function App() {
             )}
 
             {view === "history" && (
-              <div className="history-layout">
-                <HistoryTimeline
-                  projectId={project.id}
-                  previewRevision={previewRevision}
-                  commits={timelineCommits}
-                  scopedPaths={scopedPaths}
-                  scopeName={historyFile?.path}
-                  loadingScope={historyFile !== null && fileHistory === null}
-                  onClearScope={
-                    historyFile
-                      ? () => {
-                          setHistoryFile(null);
-                          setFileHistory(null);
-                        }
-                      : undefined
-                  }
-                  selectedId={selectedCommit?.id ?? ""}
-                  comparisonCandidates={activePicker?.eligibleIds ?? null}
-                  onSelect={selectTimelineEntry}
-                />
-                <section
-                  className="version-panel"
-                  aria-label="Selected version details"
-                >
-                  {selectedCommit ? (
-                    <>
+              <>
+                <h2 className="page-heading">History</h2>
+                <div className="history-layout">
+                  <HistoryTimeline
+                    projectId={project.id}
+                    previewRevision={previewRevision}
+                    commits={timelineCommits}
+                    scopedPaths={scopedPaths}
+                    scopeName={historyFile?.path}
+                    loadingScope={historyFile !== null && fileHistory === null}
+                    onClearScope={
+                      historyFile
+                        ? () => {
+                            setHistoryFile(null);
+                            setFileHistory(null);
+                          }
+                        : undefined
+                    }
+                    selectedId={selectedCommit?.id ?? ""}
+                    comparisonCandidates={activePicker?.eligibleIds ?? null}
+                    onSelect={selectTimelineEntry}
+                  />
+                  <section
+                    className="version-panel"
+                    aria-label="Selected version details"
+                  >
+                    {selectedCommit ? (
                       <VersionDetail
                         commit={selectedCommit}
                         files={selectedFiles}
@@ -1179,46 +1180,50 @@ export default function App() {
                           );
                           if (file) openRestore(selectedCommit.id, file);
                         }}
-                      />
-                      {isClipFile(selectedPath) ? (
-                        <PreviewComparison
-                          key={comparisonScope}
-                          projectId={project.id}
-                          currentCommit={selectedCommit}
-                          commits={project.commits}
-                          path={selectedPath}
-                          fileId={selectedFile?.fileId}
-                          onTimelinePickerChange={updateTimelinePicker}
-                          timelinePick={activePicker?.pick ?? null}
-                          onPreviewChange={() =>
-                            setPreviewRevision((revision) => revision + 1)
-                          }
-                        />
-                      ) : selectedPath ? (
-                        <section
-                          className="archived-file"
-                          aria-label="Archived file"
-                        >
-                          <h3>Archived file</h3>
-                          <p>
-                            Use Restore as a copy to recover this file from an
-                            earlier ArtLog project.
-                          </p>
-                        </section>
-                      ) : null}
-                    </>
-                  ) : (
-                    <div className="detail-empty">
-                      <Icon name="history" />
-                      <p>Saved versions appear here.</p>
-                    </div>
-                  )}
-                  <p className="project-path history-path" title={project.root}>
-                    <Icon name="folder" />
-                    <span>{project.root}</span>
-                  </p>
-                </section>
-              </div>
+                      >
+                        {isClipFile(selectedPath) ? (
+                          <PreviewComparison
+                            key={comparisonScope}
+                            projectId={project.id}
+                            currentCommit={selectedCommit}
+                            commits={project.commits}
+                            path={selectedPath}
+                            fileId={selectedFile?.fileId}
+                            onTimelinePickerChange={updateTimelinePicker}
+                            timelinePick={activePicker?.pick ?? null}
+                            onPreviewChange={() =>
+                              setPreviewRevision((revision) => revision + 1)
+                            }
+                          />
+                        ) : selectedPath ? (
+                          <section
+                            className="archived-file"
+                            aria-label="Archived file"
+                          >
+                            <h4>Archived file</h4>
+                            <p>
+                              Use Restore as a copy to recover this file from an
+                              earlier ArtLog project.
+                            </p>
+                          </section>
+                        ) : null}
+                      </VersionDetail>
+                    ) : (
+                      <div className="detail-empty">
+                        <Icon name="history" />
+                        <p>Saved versions appear here.</p>
+                      </div>
+                    )}
+                    <p
+                      className="project-path history-path"
+                      title={project.root}
+                    >
+                      <Icon name="folder" />
+                      <span>{project.root}</span>
+                    </p>
+                  </section>
+                </div>
+              </>
             )}
 
             {view === "files" && (

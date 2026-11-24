@@ -1,6 +1,6 @@
 .history-layout {
   display: grid;
-  grid-template-columns: minmax(230px, 0.31fr) minmax(0, 1fr);
+  grid-template-columns: clamp(220px, 27vw, 330px) minmax(0, 1fr);
   align-items: start;
   gap: clamp(14px, 2vw, 30px);
 }
@@ -39,7 +39,7 @@
   margin: 0;
 }
 
-.archived-file h3 {
+.archived-file h4 {
   margin: 0 0 5px;
   color: var(--text);
 }
@@ -150,17 +150,6 @@
   overflow-wrap: anywhere;
 }
 
-.checkpoint-form h2::after {
-  content: "";
-  display: inline-block;
-  width: 29px;
-  height: 8px;
-  margin-left: 12px;
-  border-top: 2px solid var(--purple);
-  border-radius: 50%;
-  transform: rotate(-9deg);
-}
-
 .checkpoint-form label {
   display: block;
   margin-top: 14px;
@@ -260,7 +249,7 @@
 
 @media (max-width: 980px) {
   .history-layout {
-    grid-template-columns: minmax(170px, 0.41fr) minmax(0, 1fr);
+    grid-template-columns: clamp(185px, 27vw, 245px) minmax(0, 1fr);
   }
 
   .recovery-panel {
