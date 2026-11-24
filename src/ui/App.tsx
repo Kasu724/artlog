@@ -861,72 +861,20 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <aside
-        className={
-          atHome ? "rail home-rail" : project ? "project-rail" : "rail"
-        }
-        aria-label="ArtLog"
+      <header
+        className={`topbar${atProject ? " project-topbar" : " entry-topbar"}`}
       >
-        {project ? (
-          <button
-            className="brand-mark brand-button"
-            aria-label="Close project"
-            title="Close project"
-            disabled={busy}
-            onClick={closeProject}
-          >
-            <Icon name="brand" />
-            <span>ArtLog</span>
-          </button>
-        ) : (
-          <span className="brand-mark">
-            <Icon name="brand" />
-          </span>
-        )}
-        {atHome && (
-          <RecentProjects
-            projects={recentProjects}
-            busy={busy}
-            onOpen={(item) => void openInContainer(item.root, item.id)}
-          />
-        )}
-        {atProject && (
-          <nav className="project-nav" aria-label="Project views">
-            {(
-              [
-                ["history", "History", "history"],
-                ["files", "Files", "folder"],
-                ["settings", "Settings", "settings"],
-              ] as const
-            ).map(([destination, label, icon]) => (
-              <button
-                key={destination}
-                className={
-                  view === destination ? "nav-button active" : "nav-button"
-                }
-                aria-current={view === destination ? "page" : undefined}
-                onClick={() => {
-                  if (destination === "history") {
-                    setHistoryFile(null);
-                    setFileHistory(null);
-                  }
-                  setView(destination);
-                }}
-              >
-                <Icon name={icon} />
-                <span>{label}</span>
-              </button>
-            ))}
-          </nav>
-        )}
-      </aside>
-      <section className="workspace">
-        {project && atProject && (
-          <header className="topbar">
+        <span className="brand-mark">
+          {!atHome && <Icon name="brand" />}
+          ArtLog
+        </span>
+        {project && atProject ? (
+          <>
             <h1 className="project-title" aria-label={project.name}>
               <button
                 className="project-picker"
                 aria-label={`Open another project. Current project: ${project.name}`}
+                aria-describedby="active-project-location"
                 title={project.root}
                 onClick={() => {
                   setError("");
@@ -934,11 +882,18 @@ export default function App() {
                 }}
                 disabled={busy}
               >
-                <Icon name="folder" />
+                <Icon
+                  name={
+                    project.project.mode === "singleFile" ? "file" : "folder"
+                  }
+                />
                 <span>{project.name}</span>
                 <Icon name="chevron" />
               </button>
             </h1>
+            <span id="active-project-location" className="sr-only">
+              {project.root}
+            </span>
             <div className="topbar-right">
               <span
                 className={`capture-pill state-${captureState}`}
@@ -977,9 +932,67 @@ export default function App() {
                 </button>
               )}
             </div>
-          </header>
-        )}
+          </>
+        ) : project ? (
+          <button
+            className="quiet-button"
+            disabled={busy}
+            onClick={closeProject}
+          >
+            Close project
+          </button>
+        ) : null}
+      </header>
 
+      {atProject && (
+        <aside className="project-rail">
+          <nav className="project-nav" aria-label="Project views">
+            {(
+              [
+                ["history", "History", "history"],
+                ["files", "Files", "folder"],
+                ["settings", "Settings", "settings"],
+              ] as const
+            ).map(([destination, label, icon]) => (
+              <button
+                key={destination}
+                className={
+                  view === destination ? "nav-button active" : "nav-button"
+                }
+                aria-current={view === destination ? "page" : undefined}
+                onClick={() => {
+                  if (destination === "history") {
+                    setHistoryFile(null);
+                    setFileHistory(null);
+                  }
+                  setView(destination);
+                }}
+              >
+                <Icon name={icon} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </nav>
+          <button
+            className="quiet-button close-project"
+            disabled={busy}
+            onClick={closeProject}
+          >
+            Close project
+          </button>
+        </aside>
+      )}
+      {atHome && (
+        <aside className="home-rail">
+          <RecentProjects
+            projects={recentProjects}
+            busy={busy}
+            onOpen={(item) => void openInContainer(item.root, item.id)}
+          />
+        </aside>
+      )}
+
+      <section className="workspace">
         {trashRoot ? (
           <TrashView
             root={trashRoot}
