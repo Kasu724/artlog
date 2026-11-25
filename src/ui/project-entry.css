@@ -1,7 +1,3 @@
-.home-shell .workspace {
-  grid-area: 2 / 1 / 3 / -1;
-}
-
 .welcome-layout {
   display: flex;
   flex: 1;
@@ -39,7 +35,6 @@
 
 .home-rail {
   grid-area: 2 / 1;
-  z-index: 1;
   width: clamp(172px, 25vw, 300px);
   padding: clamp(24px, 5vh, 50px) clamp(18px, 2.5vw, 30px);
   border-right: 1px solid var(--border);
@@ -102,6 +97,10 @@
 }
 
 @media (max-width: 600px) {
+  .home-shell .workspace {
+    grid-area: 2 / 1 / 3 / -1;
+  }
+
   .home-rail {
     grid-area: 3 / 1 / auto / -1;
     width: 100%;

@@ -843,6 +843,7 @@ export default function App() {
                       <VersionDetail
                         commit={selectedCommit}
                         file={selectedFile}
+                        folderPath={project.root}
                         loading={!selectedVersionReady}
                         busy={busy}
                         canReplace={
@@ -881,13 +882,6 @@ export default function App() {
                         <p>Saved versions appear here.</p>
                       </div>
                     )}
-                    <p
-                      className="project-path history-path"
-                      title={project.root}
-                    >
-                      <Icon name="folder" />
-                      <span>{project.root}</span>
-                    </p>
                   </section>
                 </div>
               </>

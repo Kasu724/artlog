@@ -185,11 +185,11 @@ export function PreviewComparison({
       )
         return;
       event.preventDefault();
-      disarmPicker();
+      chooseVersion(null);
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
-  }, [pickerArmed, disarmPicker]);
+  }, [pickerArmed, chooseVersion]);
 
   useEffect(() => () => onTimelinePickerChange(null), [onTimelinePickerChange]);
 
@@ -306,16 +306,7 @@ export function PreviewComparison({
   }
 
   return (
-    <section
-      className="compare-panel"
-      aria-label="Preview comparison"
-      onKeyDownCapture={(event) => {
-        if (event.key !== "Escape" || !pickerArmed) return;
-        event.preventDefault();
-        event.stopPropagation();
-        disarmPicker();
-      }}
-    >
+    <section className="compare-panel" aria-label="Preview comparison">
       <div className="compare-picker">
         <label>
           Previous version
@@ -599,6 +590,7 @@ function PreviewPane({
   const pointer = useRef<{ x: number; y: number; dragged: boolean } | null>(
     null,
   );
+  const pickerRef = useRef<HTMLButtonElement>(null);
   const adapterNote =
     state.state === "ready"
       ? state.preview.adapter === "clip"
@@ -606,94 +598,99 @@ function PreviewPane({
         : `Attached export · approximate · ${state.preview.width} × ${state.preview.height}`
       : "";
   return (
-    <div
-      className={`preview-pane${onPick ? " comparison-target" : ""}${pickerArmed ? " timeline-picker-armed" : ""}`}
-      onPointerDownCapture={(event) => {
-        if (onPick)
-          pointer.current = {
-            x: event.clientX,
-            y: event.clientY,
-            dragged: false,
-          };
-      }}
-      onPointerMoveCapture={(event) => {
-        const start = pointer.current;
-        if (
-          start &&
-          Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5
-        ) {
-          start.dragged = true;
-        }
-      }}
-      onClick={(event) => {
-        if (
-          !onPick ||
-          pointer.current?.dragged ||
-          (event.target instanceof Element && event.target.closest("button"))
-        )
-          return;
-        onPick();
-      }}
-    >
-      {pickerArmed && (
-        <p className="timeline-picker-hint" role="status">
-          Choose a version in history
-        </p>
-      )}
-      {!commit && onPick ? (
-        <button
-          className="preview-state preview-timeline-target"
-          type="button"
-          aria-label="Choose previous version from timeline"
-          aria-pressed={!!pickerArmed}
-          onClick={onPick}
-        >
-          <Icon name="history" />
-          {pickerArmed ? "Cancel timeline selection" : "Choose from History"}
-        </button>
-      ) : !commit ? (
-        <div className="preview-state">No previous version selected</div>
-      ) : loading ? (
-        <div className="preview-state" role="status">
-          Loading preview…
-        </div>
-      ) : state.state === "ready" ? (
-        <div
-          className="preview-thumb-stage"
-          tabIndex={0}
-          role="img"
-          aria-label={`${label.toLowerCase()} preview of ${path}; use arrow keys to pan, plus and minus to zoom, and zero to reset`}
-          onKeyDown={onKeyDown}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          onWheel={onWheel}
-        >
-          <img
-            draggable={false}
-            className="preview-thumbnail"
-            src={state.preview.dataUrl}
-            alt=""
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            }}
+    <div className="preview-pane">
+      <div
+        className={`preview-frame${onPick ? " comparison-target" : ""}${pickerArmed ? " timeline-picker-armed" : ""}`}
+        onPointerDownCapture={(event) => {
+          if (onPick)
+            pointer.current = {
+              x: event.clientX,
+              y: event.clientY,
+              dragged: false,
+            };
+        }}
+        onPointerMoveCapture={(event) => {
+          const start = pointer.current;
+          if (
+            start &&
+            Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5
+          ) {
+            start.dragged = true;
+          }
+        }}
+        onClick={(event) => {
+          if (
+            !onPick ||
+            pointer.current?.dragged ||
+            (event.target instanceof Element && event.target.closest("button"))
+          )
+            return;
+          pickerRef.current?.focus({ preventScroll: true });
+          onPick();
+        }}
+      >
+        {pickerArmed && (
+          <p className="timeline-picker-hint" role="status">
+            Choose a version in history
+          </p>
+        )}
+        {!commit ? (
+          <div className="preview-state">
+            {onPick ? <Icon name="history" /> : "No previous version selected"}
+          </div>
+        ) : loading ? (
+          <div className="preview-state" role="status">
+            Loading preview…
+          </div>
+        ) : state.state === "ready" ? (
+          <div
+            className="preview-thumb-stage"
+            tabIndex={onPick ? undefined : 0}
+            role="img"
+            aria-label={`${label.toLowerCase()} preview of ${path}; use arrow keys to pan, plus and minus to zoom, and zero to reset`}
+            onKeyDown={onKeyDown}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onWheel={onWheel}
+          >
+            <img
+              draggable={false}
+              className="preview-thumbnail"
+              src={state.preview.dataUrl}
+              alt=""
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              }}
+            />
+          </div>
+        ) : state.state === "error" ? (
+          <div className="preview-state preview-state-error" role="alert">
+            <span>Preview unavailable</span>
+            <small>{state.message}</small>
+            <button className="text-button" onClick={onRetry}>
+              Try again
+            </button>
+          </div>
+        ) : (
+          <div className="preview-state">
+            <Icon name="file" />
+            <span>No preview saved for this version</span>
+          </div>
+        )}
+        {onPick && (
+          <button
+            ref={pickerRef}
+            className="preview-frame-picker"
+            type="button"
+            aria-label="Choose previous version from timeline"
+            aria-pressed={!!pickerArmed}
+            onClick={onPick}
+            onKeyDown={state.state === "ready" ? onKeyDown : undefined}
           />
-        </div>
-      ) : state.state === "error" ? (
-        <div className="preview-state preview-state-error" role="alert">
-          <span>Preview unavailable</span>
-          <small>{state.message}</small>
-          <button className="text-button" onClick={onRetry}>
-            Try again
-          </button>
-        </div>
-      ) : (
-        <div className="preview-state">
-          <Icon name="file" />
-          <span>No preview saved for this version</span>
-        </div>
-      )}
+        )}
+      </div>
       <span className="preview-card-label" title={commit?.title}>
         {label}
         {commit && <small>{commit.title}</small>}
@@ -709,16 +706,6 @@ function PreviewPane({
         >
           {adapterNote}
         </span>
-      )}
-      {commit && onPick && (
-        <button
-          className="text-button preview-timeline-action"
-          type="button"
-          aria-pressed={!!pickerArmed}
-          onClick={onPick}
-        >
-          {pickerArmed ? "Cancel timeline selection" : "Choose from History"}
-        </button>
       )}
     </div>
   );

@@ -62,34 +62,35 @@
   gap: 10px;
 }
 .preview-pane {
-  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+.preview-frame {
+  position: relative;
   border-radius: var(--radius);
 }
-.preview-pane.timeline-picker-armed {
-  outline: 1px solid var(--purple);
+.preview-frame.timeline-picker-armed {
+  outline: 2px solid var(--purple);
+  outline-offset: -1px;
 }
-.preview-pane.comparison-target {
+.preview-frame.comparison-target {
   cursor: pointer;
 }
-.preview-pane > .preview-timeline-target {
-  width: 100%;
-  color: var(--text);
-  font-weight: 600;
-  background: var(--inset);
+.preview-frame-picker {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  pointer-events: none;
 }
-.preview-timeline-target:hover,
-.preview-timeline-target[aria-pressed="true"] {
-  background: var(--purple-surface);
-}
-.preview-timeline-target:focus-visible {
+.preview-frame-picker:focus-visible {
   outline-offset: -3px;
 }
-.preview-timeline-action {
-  align-self: flex-start;
-  margin: 4px 0 0;
+.comparison-target:hover .preview-state {
+  border-color: var(--purple);
 }
 .timeline-picker-hint {
   position: absolute;

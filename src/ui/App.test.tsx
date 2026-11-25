@@ -542,6 +542,16 @@ describe("ArtLog desktop workflows", () => {
       id: "v1",
       path: "painting.clip",
     });
+
+    fireEvent.click(slot);
+    expect(slot).toHaveAttribute("aria-pressed", "true");
+    fireEvent.keyDown(previous, { key: "Escape" });
+
+    await waitFor(() => expect(selector).toHaveValue(""));
+    expect(slot).toHaveAttribute("aria-pressed", "false");
+    expect(current).toBeEnabled();
+    expect(current).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Choose a version in history")).toBeNull();
   });
 
   it("requires confirmation before in-place replacement and reports the safety snapshot", async () => {

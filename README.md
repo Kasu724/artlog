@@ -20,10 +20,11 @@ has no outbound traffic when the device is connected.
    notes. Edits stay with that history and preserve the saved version ID.
 3. Select a version to inspect, compare, or restore. Choose a comparison from
    the **Previous version** menu or click the previous preview and choose a
-   version in History. **Restore as a copy** verifies the restored bytes and
-   requires a new destination. To replace a working file, close it in Clip
-   Studio Paint, confirm the named target, and let ArtLog record a safety
-   snapshot first.
+   version in History. Press **Esc** while choosing to clear the previous
+   version. **Restore as a copy** verifies the restored bytes and requires
+   a new destination. To replace a working file, close it in Clip Studio
+   Paint, confirm the named target, and let ArtLog record a safety snapshot
+   first.
 
 ArtLog reads the embedded canvas preview from each saved `.clip` version and
 shows a thumbnail in History. Previews are flattened, scaled to at most 1,024

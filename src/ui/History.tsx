@@ -48,7 +48,12 @@ export function HistoryTimeline({
         <div className="timeline-scroll">
           <div className="timeline-list">
             {commits.map((commit) => (
-              <div className="timeline-row" key={`${projectId}:${commit.id}`}>
+              <div
+                className="timeline-row"
+                data-current={commit.id === selectedId}
+                key={`${projectId}:${commit.id}`}
+              >
+                <span className="timeline-dot" aria-hidden="true" />
                 <TimelineEntry
                   projectId={projectId}
                   commit={commit}
@@ -212,6 +217,7 @@ function TimelineThumbnail({
 export function VersionDetail({
   commit,
   file,
+  folderPath,
   loading,
   busy,
   canReplace,
@@ -221,6 +227,7 @@ export function VersionDetail({
 }: {
   commit: CommitSummary;
   file: FileVersion | null;
+  folderPath: string;
   loading: boolean;
   busy: boolean;
   canReplace: boolean;
@@ -251,6 +258,10 @@ export function VersionDetail({
               </span>
             </span>
           )}
+          <span className="project-path version-folder-path" title={folderPath}>
+            <Icon name="folder" />
+            <span>{folderPath}</span>
+          </span>
         </div>
         {commit.note && (
           <p className="detail-note">
@@ -270,8 +281,9 @@ export function VersionDetail({
       <div className="restore-actions">
         {file && canReplace && (
           <button
-            className="quiet-button restore-place"
-            disabled={busy || !file}
+            type="button"
+            className="secondary-button restore-place"
+            disabled={busy}
             onClick={onRestoreInPlace}
           >
             Replace working file…
