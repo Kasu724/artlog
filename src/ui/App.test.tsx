@@ -486,6 +486,15 @@ describe("ArtLog desktop workflows", () => {
         name: /softened the background/i,
       }),
     ).toBeNull();
+    const sideBySide = screen.getByRole("button", { name: "Side by side" });
+    const overlay = screen.getByRole("button", { name: "Overlay" });
+    const difference = screen.getByRole("button", { name: "Difference" });
+    const zoomIn = screen.getByRole("button", { name: "Zoom in" });
+    expect(sideBySide).toBeDisabled();
+    expect(overlay).toBeDisabled();
+    expect(difference).toBeDisabled();
+    await waitFor(() => expect(zoomIn).toBeEnabled());
+
     fireEvent.change(selector, { target: { value: "v1" } });
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith("get_preview", {
@@ -494,13 +503,12 @@ describe("ArtLog desktop workflows", () => {
         path: "painting.clip",
       }),
     );
-    expect(await screen.findByRole("button", { name: "Overlay" })).toBeTruthy();
-    expect(
-      screen
-        .getByRole("button", { name: "Difference" })
-        .hasAttribute("disabled"),
-    ).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    await waitFor(() => {
+      expect(sideBySide).toBeEnabled();
+      expect(overlay).toBeEnabled();
+      expect(difference).toBeEnabled();
+    });
+    fireEvent.click(zoomIn);
     expect(screen.getByText("115%")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Reset zoom and pan" }));
     expect(screen.getByText("100%")).toBeTruthy();

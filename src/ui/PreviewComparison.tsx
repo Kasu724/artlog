@@ -349,63 +349,63 @@ export function PreviewComparison({
           </div>
         )}
       </div>
-      {comparisonCommit && (
-        <div className="preview-controls-row">
-          {current.result.state === "ready" &&
-            comparison.result.state === "ready" && (
-              <div
-                className="compare-modes"
-                role="group"
-                aria-label="Comparison mode"
-              >
-                <button
-                  aria-pressed={mode === "side"}
-                  onClick={() => setMode("side")}
-                >
-                  Side by side
-                </button>
-                <button
-                  aria-pressed={mode === "overlay"}
-                  disabled={!sameDimensions}
-                  onClick={() => setMode("overlay")}
-                >
-                  Overlay
-                </button>
-                <button
-                  aria-pressed={mode === "difference"}
-                  disabled={!sameDimensions}
-                  onClick={() => setMode("difference")}
-                >
-                  Difference
-                </button>
-              </div>
-            )}
-          <div
-            className="preview-pan-controls"
-            role="group"
-            aria-label="Synchronized zoom and pan controls"
+      <div className="preview-controls-row">
+        <div
+          className="compare-modes"
+          role="group"
+          aria-label="Comparison mode"
+        >
+          <button
+            aria-pressed={mode === "side"}
+            disabled={!comparisonCommit}
+            onClick={() => setMode("side")}
           >
-            <button
-              aria-label="Zoom out"
-              onClick={() => zoomBy(-0.15)}
-              disabled={zoom <= 1}
-            >
-              −
-            </button>
-            <span>{Math.round(zoom * 100)}%</span>
-            <button
-              aria-label="Zoom in"
-              onClick={() => zoomBy(0.15)}
-              disabled={zoom >= 5}
-            >
-              ＋
-            </button>
-            <button aria-label="Reset zoom and pan" onClick={resetView}>
-              Reset
-            </button>
-          </div>
+            Side by side
+          </button>
+          <button
+            aria-pressed={mode === "overlay"}
+            disabled={!sameDimensions}
+            onClick={() => setMode("overlay")}
+          >
+            Overlay
+          </button>
+          <button
+            aria-pressed={mode === "difference"}
+            disabled={!sameDimensions}
+            onClick={() => setMode("difference")}
+          >
+            Difference
+          </button>
         </div>
-      )}
+        <div
+          className="preview-pan-controls"
+          role="group"
+          aria-label="Synchronized zoom and pan controls"
+        >
+          <button
+            aria-label="Zoom out"
+            onClick={() => zoomBy(-0.15)}
+            disabled={!anyPreview || zoom <= 1}
+          >
+            −
+          </button>
+          <span>{Math.round(zoom * 100)}%</span>
+          <button
+            aria-label="Zoom in"
+            onClick={() => zoomBy(0.15)}
+            disabled={!anyPreview || zoom >= 5}
+          >
+            ＋
+          </button>
+          <button
+            aria-label="Reset zoom and pan"
+            disabled={!anyPreview}
+            onClick={resetView}
+          >
+            Reset
+          </button>
+        </div>
+      </div>
       {mode === "overlay" && sameDimensions && (
         <label className="opacity-control">
           Current version opacity{" "}

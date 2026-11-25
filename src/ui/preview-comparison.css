@@ -220,7 +220,7 @@
 .compare-modes button:hover:not(:disabled) {
   background: var(--inset);
 }
-.compare-modes button[aria-pressed="true"] {
+.compare-modes button[aria-pressed="true"]:not(:disabled) {
   border-color: var(--purple);
   background: var(--purple-surface);
   color: var(--text);
@@ -229,6 +229,9 @@
 .compare-modes button:disabled {
   border-color: var(--border);
   color: var(--muted);
+}
+.compare-modes button:disabled {
+  background: var(--inset);
 }
 .preview-pan-controls span {
   min-width: 43px;
